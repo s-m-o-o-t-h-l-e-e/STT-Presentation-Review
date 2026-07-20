@@ -88,7 +88,7 @@ pip install -r requirements.txt
 CLOVA_SPEECH_SECRET_KEY=
 CLOVA_SPEECH_INVOKE_URL=
 CLAUDE_API_KEY=
-CLAUDE_MODEL=claude-3-5-haiku-latest
+CLAUDE_MODEL=choose_CLAUDE_key
 CLAUDE_TIMEOUT_SECONDS=180
 ```
 
