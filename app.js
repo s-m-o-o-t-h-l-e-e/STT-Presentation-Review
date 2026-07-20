@@ -14,6 +14,17 @@ const state = {
   listening: false,
   streamingTranscript: "",
   streamingInterim: "",
+  streamingTimeline: [],
+  streamingStartMs: null,
+  streamingLastFinalSec: 0,
+  mediaStream: null,
+  mediaRecorder: null,
+  mediaChunks: [],
+  recordedBlob: null,
+  recordedAudioUrl: "",
+  recordedAudioName: "",
+  recordingSavedPath: "",
+  recordingMime: "audio/webm",
   targetLang: "en",
   translation: "",
   translationStatus: "대기",
@@ -28,6 +39,28 @@ const html = (value = "") => String(value)
   .replaceAll("'", "&#039;");
 const scoreOf = (value) => Math.max(0, Math.min(100, Number(value || 0)));
 const ready = () => Boolean(state.analysis);
+
+function formatClock(seconds = 0) {
+  const total = Math.max(0, Number(seconds || 0));
+  const minutes = Math.floor(total / 60);
+  const secs = Math.floor(total % 60);
+  return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
+function streamingElapsedSec() {
+  if (!state.streamingStartMs) return 0;
+  return (Date.now() - state.streamingStartMs) / 1000;
+}
+
+function rebuildStreamingTranscript() {
+  state.streamingTranscript = state.streamingTimeline.map((item) => item.text).join("\n");
+}
+
+function streamingFileName() {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
+  const ext = state.recordingMime.includes("mp4") ? "m4a" : state.recordingMime.includes("ogg") ? "ogg" : "webm";
+  return `streaming-stt-${stamp}.${ext}`;
+}
 
 function asText(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
@@ -287,16 +320,23 @@ function renderUpload() {
 }
 
 function renderStreamingPanel() {
+  const timeline = state.streamingTimeline || [];
+  const recordingStatus = state.listening
+    ? "녹음 중"
+    : state.recordedBlob
+      ? "녹음 완료"
+      : "녹음 대기";
   return `
     <section class="streaming-panel">
       <div class="panel-head">
         <h2>실시간 한국어 STT</h2>
-        <span>${state.listening ? "전사 중" : "대기 중"}</span>
+        <span>${state.listening ? "전사/녹음 중" : "대기 중"}</span>
       </div>
       <div class="streaming-actions">
         <button class="primary" onclick="startStreaming()" ${state.listening ? "disabled" : ""}>실시간 STT 시작</button>
         <button class="outline" onclick="stopStreaming()" ${!state.listening ? "disabled" : ""}>중지</button>
         <button class="outline" onclick="clearStreaming()">전사문 지우기</button>
+        ${state.recordedBlob ? `<button class="outline" onclick="downloadStreamingAudio()">녹음 파일 다운로드</button>` : ""}
         <label class="streaming-select">번역 언어
           <select onchange="setTargetLang(this.value)">
             ${[
@@ -309,9 +349,19 @@ function renderStreamingPanel() {
       </div>
       <div class="streaming-grid">
         <article class="stream-box">
-          <h3>한국어 전사문</h3>
-          <textarea id="streamingText" oninput="updateStreamingText(this.value)" placeholder="실시간 STT 결과가 여기에 표시됩니다. 직접 입력해도 분석에 사용할 수 있습니다.">${html(state.streamingTranscript)}</textarea>
-          <p class="muted">${state.streamingInterim ? `인식 중: ${html(state.streamingInterim)}` : `${state.streamingTranscript.replace(/\s/g, "").length}자`}</p>
+          <h3>한국어 전사문 <span>${timeline.length}개 구간</span></h3>
+          <div class="stream-timeline">
+            ${timeline.length ? timeline.map((item, index) => `
+              <div class="stream-timeline-item">
+                <b>${html(item.time)}</b>
+                <span>구간 ${index + 1}</span>
+                <p>${html(item.text)}</p>
+              </div>`).join("") : `<p class="muted">실시간 STT 시작을 누르면 타임라인별 전사문이 여기에 표시됩니다.</p>`}
+            ${state.streamingInterim ? `<div class="stream-timeline-item interim"><b>${html(formatClock(streamingElapsedSec()))}</b><span>인식 중</span><p>${html(state.streamingInterim)}</p></div>` : ""}
+          </div>
+          <textarea id="streamingText" class="manual-transcript" oninput="updateStreamingText(this.value)" placeholder="필요하면 전사문을 직접 수정할 수 있습니다.">${html(state.streamingTranscript)}</textarea>
+          <p class="muted">${state.streamingTranscript.replace(/\s/g, "").length}자 · ${recordingStatus}${state.recordingSavedPath ? ` · 서버 저장 완료: ${html(state.recordingSavedPath)}` : ""}</p>
+          ${state.recordedAudioUrl ? `<audio class="recorded-audio" controls src="${state.recordedAudioUrl}"></audio>` : ""}
         </article>
         <article class="stream-box">
           <h3>번역 결과 <span>${html(state.translationStatus)}</span></h3>
@@ -344,13 +394,14 @@ function createRecognition() {
   recognition.maxAlternatives = 1;
   recognition.onstart = () => {
     state.listening = true;
+    if (!state.streamingStartMs) state.streamingStartMs = Date.now();
     renderUpload();
   };
   recognition.onresult = (event) => {
     let interim = "";
     for (let i = event.resultIndex; i < event.results.length; i += 1) {
       const text = event.results[i][0].transcript.trim();
-      if (event.results[i].isFinal && text) state.streamingTranscript += `${text}\n`;
+      if (event.results[i].isFinal && text) addStreamingTimelineItem(text);
       else interim += text;
     }
     state.streamingInterim = interim;
@@ -358,32 +409,131 @@ function createRecognition() {
   };
   recognition.onerror = (event) => {
     state.listening = false;
+    if (state.mediaRecorder && state.mediaRecorder.state !== "inactive") state.mediaRecorder.stop();
     alert(event.error || "실시간 음성 인식 오류가 발생했습니다.");
     renderUpload();
   };
   recognition.onend = () => {
     state.listening = false;
     state.streamingInterim = "";
+    if (state.mediaRecorder && state.mediaRecorder.state !== "inactive") state.mediaRecorder.stop();
     renderUpload();
   };
   return recognition;
 }
 
-function startStreaming() {
+function addStreamingTimelineItem(text) {
+  const end = Math.max(streamingElapsedSec(), state.streamingLastFinalSec + 0.2);
+  const estimated = Math.max(1.2, Math.min(8, text.length / 7));
+  const start = Math.max(state.streamingLastFinalSec, end - estimated);
+  const item = {
+    start,
+    end,
+    time: `${formatClock(start)}-${formatClock(end)}`,
+    text,
+  };
+  state.streamingTimeline.push(item);
+  state.streamingLastFinalSec = end;
+  rebuildStreamingTranscript();
+}
+
+function preferredRecordingMime() {
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus",
+  ];
+  return candidates.find((type) => window.MediaRecorder && MediaRecorder.isTypeSupported(type)) || "";
+}
+
+async function startRecording() {
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    alert("이 브라우저는 마이크 녹음을 지원하지 않습니다. Chrome 또는 Edge를 사용해 주세요.");
+    return false;
+  }
+  state.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  state.mediaChunks = [];
+  state.recordedBlob = null;
+  state.recordedAudioName = "";
+  state.recordingSavedPath = "";
+  if (state.recordedAudioUrl) URL.revokeObjectURL(state.recordedAudioUrl);
+  state.recordedAudioUrl = "";
+  state.recordingMime = preferredRecordingMime() || "audio/webm";
+  state.mediaRecorder = new MediaRecorder(state.mediaStream, state.recordingMime ? { mimeType: state.recordingMime } : undefined);
+  state.mediaRecorder.ondataavailable = (event) => {
+    if (event.data && event.data.size > 0) state.mediaChunks.push(event.data);
+  };
+  state.mediaRecorder.onstop = async () => {
+    state.recordedBlob = new Blob(state.mediaChunks, { type: state.recordingMime || "audio/webm" });
+    state.recordedAudioName = streamingFileName();
+    state.recordedAudioUrl = URL.createObjectURL(state.recordedBlob);
+    state.mediaStream?.getTracks().forEach((track) => track.stop());
+    state.mediaStream = null;
+    await saveStreamingAudio();
+    renderUpload();
+  };
+  state.mediaRecorder.start(1000);
+  return true;
+}
+
+async function saveStreamingAudio() {
+  if (!state.recordedBlob) return;
+  try {
+    const form = new FormData();
+    form.append("audio", state.recordedBlob, state.recordedAudioName || streamingFileName());
+    form.append("transcript", state.streamingTranscript || "");
+    form.append("timeline", JSON.stringify(state.streamingTimeline || []));
+    const res = await fetch("/api/save-recording", { method: "POST", body: form });
+    const data = await res.json();
+    if (data.ok) state.recordingSavedPath = data.path || "";
+  } catch (err) {
+    state.recordingSavedPath = "서버 저장 실패";
+  }
+}
+
+function downloadStreamingAudio() {
+  if (!state.recordedBlob || !state.recordedAudioUrl) return;
+  const link = document.createElement("a");
+  link.href = state.recordedAudioUrl;
+  link.download = state.recordedAudioName || streamingFileName();
+  link.click();
+}
+
+async function startStreaming() {
   if (!state.recognition) state.recognition = createRecognition();
   if (!state.recognition || state.listening) return;
-  state.recognition.start();
+  state.streamingStartMs = Date.now();
+  state.streamingLastFinalSec = 0;
+  try {
+    const recordingReady = await startRecording();
+    if (!recordingReady) return;
+    state.recognition.start();
+  } catch (err) {
+    state.mediaStream?.getTracks().forEach((track) => track.stop());
+    state.mediaStream = null;
+    alert(err?.message || "실시간 STT/녹음을 시작하지 못했습니다.");
+  }
 }
 
 function stopStreaming() {
   if (state.recognition && state.listening) state.recognition.stop();
+  if (state.mediaRecorder && state.mediaRecorder.state !== "inactive") state.mediaRecorder.stop();
 }
 
 function clearStreaming() {
   state.streamingTranscript = "";
   state.streamingInterim = "";
+  state.streamingTimeline = [];
+  state.streamingStartMs = null;
+  state.streamingLastFinalSec = 0;
   state.translation = "";
   state.translationStatus = "대기";
+  state.recordedBlob = null;
+  state.recordedAudioName = "";
+  state.recordingSavedPath = "";
+  if (state.recordedAudioUrl) URL.revokeObjectURL(state.recordedAudioUrl);
+  state.recordedAudioUrl = "";
   renderUpload();
 }
 

@@ -1,5 +1,6 @@
 import cgi
 import json
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib import request
@@ -10,6 +11,7 @@ import app as analysis_app
 from presentation_review.config.settings import CLAUDE_API_KEY, CLAUDE_MODEL, CLAUDE_TIMEOUT_SECONDS
 
 ROOT = Path(__file__).parent
+RECORDING_DIR = ROOT / "output" / "recordings"
 STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
@@ -123,6 +125,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.handle_analyze_text()
             elif path == "/api/translate":
                 self.handle_translate()
+            elif path == "/api/save-recording":
+                self.handle_save_recording()
             elif path == "/api/evaluate-answer":
                 self.handle_evaluate_answer()
             elif path == "/api/report":
@@ -137,6 +141,51 @@ class Handler(BaseHTTPRequestHandler):
         if material_field is not None and getattr(material_field, "filename", ""):
             return UploadedFile(Path(material_field.filename).name, material_field.file.read())
         return None
+
+    def safe_filename(self, name: str, fallback: str = "recording.webm") -> str:
+        cleaned = re.sub(r"[^0-9A-Za-z가-힣._-]+", "-", Path(name or fallback).name).strip(".-")
+        return cleaned or fallback
+
+    def handle_save_recording(self) -> None:
+        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST"})
+        field = form["audio"] if "audio" in form else None
+        if field is None or not getattr(field, "filename", ""):
+            self.send_json({"ok": False, "error": "저장할 녹음 파일이 없습니다."}, 400)
+            return
+
+        RECORDING_DIR.mkdir(parents=True, exist_ok=True)
+        filename = self.safe_filename(field.filename)
+        target = RECORDING_DIR / filename
+        if target.exists():
+            stem = target.stem
+            suffix = target.suffix
+            index = 2
+            while target.exists():
+                target = RECORDING_DIR / f"{stem}-{index}{suffix}"
+                index += 1
+
+        target.write_bytes(field.file.read())
+
+        transcript = str(form.getfirst("transcript", "") or "")
+        timeline = str(form.getfirst("timeline", "") or "[]")
+        meta_path = target.with_suffix(target.suffix + ".json")
+        try:
+            parsed_timeline = json.loads(timeline)
+        except json.JSONDecodeError:
+            parsed_timeline = []
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "audio_file": target.name,
+                    "transcript": transcript,
+                    "timeline": parsed_timeline,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        self.send_json({"ok": True, "path": str(target.relative_to(ROOT)).replace("\\", "/")})
 
     def handle_analyze(self) -> None:
         form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST"})
