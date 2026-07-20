@@ -1,0 +1,20 @@
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.pyc
+*.pyo
+
+output/
+reports/
+dist/
+build/
+.streamlit/secrets.toml
+
+streaming/
+최종 구현물(mockup)/
+
+*.log
+*.tmp
+*.zip
