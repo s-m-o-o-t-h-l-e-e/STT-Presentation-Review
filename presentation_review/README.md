@@ -24,5 +24,3 @@ speech_to_text
 → llm
 → reports
 ```
-
-기능별 파일을 분리해서 `server.py`가 너무 길어지지 않도록 구성했습니다.
