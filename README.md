@@ -40,7 +40,6 @@ CLAUDE_MODEL
 ```
 
 STT 모델 비교 실험용 키는 `.env.private`에 둡니다.  
-`.env.private`는 Git에 올라가지 않게 제외되어 있습니다.
 
 ```text
 AZURE_SPEECH_KEY
