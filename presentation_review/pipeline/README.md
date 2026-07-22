@@ -1,10 +1,26 @@
 # pipeline
 
-STT, 정량 분석, 자료 매칭, LLM 평가를 하나의 흐름으로 연결하는 폴더입니다.
+발표 분석 전체 흐름을 묶는 폴더입니다.
 
-## 주요 역할
+## 파일
 
-- 업로드된 음성 파일 분석 실행
-- 실시간 STT 전사문 기반 분석 실행
-- 분석 결과 데이터 구조 생성
-- 화면과 PDF 리포트에서 사용하는 최종 결과 반환
+- `analysis.py`
+  - 음성 전사
+  - 문장별 타임라인 구성
+  - 발화 속도/추임새/화자별 지표 계산
+  - 발표자료 비교
+  - Claude 평가 호출
+  - 화면과 리포트에서 사용할 최종 결과 dict 생성
+
+## 흐름
+
+```text
+audio + optional material
+  -> STT
+  -> speech metrics
+  -> material matching
+  -> LLM evaluation
+  -> final analysis result
+```
+
+서버 쪽 API에서는 이 모듈을 호출해서 한 번에 분석 결과를 받습니다.

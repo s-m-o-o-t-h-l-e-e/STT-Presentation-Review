@@ -1,12 +1,14 @@
 # config
 
-환경변수와 서비스 설정을 관리하는 폴더입니다.
+프로젝트 실행에 필요한 환경값을 읽는 폴더입니다.
 
-## 주요 역할
+## 파일
 
-- `.env` 파일 로드
-- CLOVA Speech Invoke URL 관리
-- CLOVA Speech Secret Key 관리
-- Claude API Key, 모델명, timeout 설정 관리
+- `settings.py`
+  - `.env`에서 CLOVA, Claude 같은 API 설정을 읽습니다.
+  - 기본 timeout, 모델명, 키 이름을 한곳에서 관리합니다.
 
-실제 API 키는 `.env`에만 저장하고 GitHub에는 올리지 않습니다.
+## 참고
+
+일반 서비스 실행은 `.env`를 사용합니다.  
+STT 모델 비교 실험은 `evaluation/run_stt_model_cer_benchmark.py`에서 `.env.private`를 우선 읽습니다.

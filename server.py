@@ -1,7 +1,9 @@
-import cgi
+﻿import cgi
 import json
 import re
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 from pathlib import Path
 from urllib import request
 from urllib.error import HTTPError
@@ -9,6 +11,7 @@ from urllib.parse import urlparse
 
 import app as analysis_app
 from presentation_review.config.settings import CLAUDE_API_KEY, CLAUDE_MODEL, CLAUDE_TIMEOUT_SECONDS
+from presentation_review.materials.extractor import extract_material_text
 
 ROOT = Path(__file__).parent
 RECORDING_DIR = ROOT / "output" / "recordings"
@@ -127,6 +130,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.handle_translate()
             elif path == "/api/save-recording":
                 self.handle_save_recording()
+            elif path == "/api/material-preview":
+                self.handle_material_preview()
             elif path == "/api/evaluate-answer":
                 self.handle_evaluate_answer()
             elif path == "/api/report":
@@ -191,11 +196,12 @@ class Handler(BaseHTTPRequestHandler):
         form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST"})
         field = form["audio"] if "audio" in form else None
         streaming_transcript = str(form.getfirst("streaming_transcript", "") or "").strip()
+        streaming_timeline = self.parse_streaming_timeline(str(form.getfirst("streaming_timeline", "") or "[]"))
         material = self.material_from_form(form)
 
         if field is None or not getattr(field, "filename", ""):
             if streaming_transcript:
-                result = analysis_app.run_analysis_from_transcript(streaming_transcript, material, "실시간 STT 전사문")
+                result = analysis_app.run_analysis_from_transcript(streaming_transcript, material, "실시간 STT 전사문", streaming_timeline)
                 self.send_json({"ok": True, "analysis": result})
                 return
             self.send_json({"ok": False, "error": "audio 파일 또는 스트리밍 전사문이 없습니다."}, 400)
@@ -205,7 +211,55 @@ class Handler(BaseHTTPRequestHandler):
         result = analysis_app.run_analysis(audio, material)
         if streaming_transcript:
             result["streaming_transcript"] = streaming_transcript
+        if streaming_timeline:
+            result["streaming_timeline"] = streaming_timeline
         self.send_json({"ok": True, "analysis": result})
+
+    def parse_streaming_timeline(self, raw: str) -> list:
+        try:
+            parsed = json.loads(raw or "[]")
+        except json.JSONDecodeError:
+            return []
+        return parsed if isinstance(parsed, list) else []
+
+    def handle_material_preview(self) -> None:
+        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST"})
+        material = self.material_from_form(form)
+        if material is None:
+            self.send_json({"ok": False, "error": "PPT/PDF 발표자료가 없습니다."}, 400)
+            return
+
+        info = extract_material_text(material)
+        sections = info.get("sections") or []
+        page_count = self.material_page_count(material, info.get("type", ""), sections)
+        self.send_json({
+            "ok": True,
+            "name": info.get("name", ""),
+            "type": info.get("type", ""),
+            "sections": sections,
+            "page_count": page_count,
+            "error": info.get("error", ""),
+        })
+
+    def material_page_count(self, material: UploadedFile, material_type: str, sections: list) -> int:
+        data = material.getvalue()
+        kind = str(material_type or "").upper()
+        if kind == "PPTX":
+            try:
+                with zipfile.ZipFile(BytesIO(data)) as archive:
+                    return max(1, len([name for name in archive.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", name)]))
+            except Exception:
+                return max(1, len(sections))
+        if kind == "PDF":
+            try:
+                try:
+                    from pypdf import PdfReader
+                except Exception:
+                    from PyPDF2 import PdfReader
+                return max(1, len(PdfReader(BytesIO(data)).pages))
+            except Exception:
+                return max(1, len(sections))
+        return max(1, len(sections))
 
     def handle_analyze_text(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
@@ -214,7 +268,7 @@ class Handler(BaseHTTPRequestHandler):
         if not transcript:
             self.send_json({"ok": False, "error": "분석할 스트리밍 전사문이 없습니다."}, 400)
             return
-        result = analysis_app.run_analysis_from_transcript(transcript, None, "실시간 STT 전사문")
+        result = analysis_app.run_analysis_from_transcript(transcript, None, "실시간 STT 전사문", data.get("timeline", []))
         self.send_json({"ok": True, "analysis": result})
 
     def handle_translate(self) -> None:

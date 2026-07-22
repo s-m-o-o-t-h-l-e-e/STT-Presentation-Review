@@ -11,6 +11,10 @@ reports/
 dist/
 build/
 .streamlit/secrets.toml
+secrets/
+evaluation/speech_data/
+evaluation/voice actor_data/
+*.pdf
 
 streaming/
 최종 구현물(mockup)/

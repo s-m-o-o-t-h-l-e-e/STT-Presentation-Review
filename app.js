@@ -9,6 +9,14 @@ const state = {
   qaResults: {},
   selectedFile: null,
   selectedMaterial: null,
+  materialPreview: null,
+  materialObjectUrl: "",
+  practiceMaterial: null,
+  practicePreview: null,
+  practiceObjectUrl: "",
+  practicePdfDoc: null,
+  practicePdfRenderKey: "",
+  practicePdfZoom: 0.9,
   busy: false,
   recognition: null,
   listening: false,
@@ -28,6 +36,17 @@ const state = {
   targetLang: "en",
   translation: "",
   translationStatus: "대기",
+  uploadTranslationText: "",
+  uploadTranslation: "",
+  uploadTranslationStatus: "대기",
+  practice: {
+    active: false,
+    startedAtMs: null,
+    pageStartedAtMs: null,
+    currentPage: 1,
+    records: [],
+    tick: 0,
+  },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -37,8 +56,10 @@ const html = (value = "") => String(value)
   .replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;")
   .replaceAll("'", "&#039;");
+
 const scoreOf = (value) => Math.max(0, Math.min(100, Number(value || 0)));
 const ready = () => Boolean(state.analysis);
+const nowMs = () => Date.now();
 
 function formatClock(seconds = 0) {
   const total = Math.max(0, Number(seconds || 0));
@@ -47,19 +68,24 @@ function formatClock(seconds = 0) {
   return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
+function formatDuration(seconds = 0) {
+  const n = Math.max(0, Math.round(Number(seconds || 0)));
+  return n >= 60 ? `${Math.floor(n / 60)}분 ${n % 60}초` : `${n}초`;
+}
+
 function streamingElapsedSec() {
   if (!state.streamingStartMs) return 0;
-  return (Date.now() - state.streamingStartMs) / 1000;
+  return (nowMs() - state.streamingStartMs) / 1000;
 }
 
-function rebuildStreamingTranscript() {
-  state.streamingTranscript = state.streamingTimeline.map((item) => item.text).join("\n");
+function practiceElapsedSec() {
+  if (!state.practice.startedAtMs) return 0;
+  return (nowMs() - state.practice.startedAtMs) / 1000;
 }
 
-function streamingFileName() {
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
-  const ext = state.recordingMime.includes("mp4") ? "m4a" : state.recordingMime.includes("ogg") ? "ogg" : "webm";
-  return `streaming-stt-${stamp}.${ext}`;
+function currentPageElapsedSec() {
+  if (!state.practice.pageStartedAtMs) return 0;
+  return (nowMs() - state.practice.pageStartedAtMs) / 1000;
 }
 
 function asText(value, fallback = "") {
@@ -93,27 +119,8 @@ function metricCount(value, fallbackList = []) {
 
 function cleanSpeaker(value) {
   const text = asText(value, "화자 1").trim();
-  if (!text || /[\uFFFD?]/.test(text) || text.includes("미상")) return "화자 1";
+  if (!text || text.includes("미상") || /[\uFFFD]/.test(text)) return "화자 1";
   return text;
-}
-
-function displaySpeakers(items) {
-  const rows = Array.isArray(items) ? items : [];
-  return rows.map((row) => ({ ...row, speaker: cleanSpeaker(row.speaker) }));
-}
-
-function displayTimelineItems(items) {
-  const rows = Array.isArray(items) ? items : [];
-  return rows.map((row) => ({
-    ...row,
-    speaker: cleanSpeaker(row.speaker),
-  }));
-}
-
-function formatGap(value) {
-  const number = Number(value || 0);
-  if (!Number.isFinite(number) || number <= 0) return "0";
-  return number < 1 ? number.toFixed(2).replace(/0+$/, "").replace(/\.$/, "") : number.toFixed(1).replace(/\.0$/, "");
 }
 
 function displayVoiceScores(analysis) {
@@ -158,9 +165,9 @@ function cleanPriorities(items) {
   return (Array.isArray(items) ? items : []).map((item) => {
     if (typeof item === "string") return { title: meaningfulText(item), impact: "", detail: "" };
     return {
-      title: meaningfulText(item?.title || item?.priority || item?.name),
-      impact: asText(item?.impact || item?.level),
-      detail: meaningfulText(item?.detail || item?.fix || item?.reason),
+      title: meaningfulText(item?.title || item?.name || item?.priority),
+      impact: asText(item?.impact || item?.level || ""),
+      detail: meaningfulText(item?.detail || item?.description || item?.fix),
     };
   }).filter((item) => item.title || item.detail);
 }
@@ -176,6 +183,15 @@ function cleanQuestions(items) {
   }).filter((item) => item.question);
 }
 
+function bar(label, value, tone = "cyan") {
+  const n = scoreOf(value);
+  return `<div class="scorebar"><p>${html(label)}<b>${n}점</b></p><span><i class="${tone}" style="width:${n}%"></i></span></div>`;
+}
+
+function card(title, body, cls = "") {
+  return `<article class="card ${cls}"><h3>${html(title)}</h3>${body}</article>`;
+}
+
 function setView(view, tab = state.tab) {
   state.view = view;
   state.tab = tab;
@@ -186,15 +202,6 @@ function setTab(tab) {
   state.view = "demo";
   state.tab = tab;
   render();
-}
-
-function bar(label, value, tone = "cyan") {
-  const n = scoreOf(value);
-  return `<div class="scorebar"><p>${html(label)}<b>${n}점</b></p><span><i class="${tone}" style="width:${n}%"></i></span></div>`;
-}
-
-function card(title, body, cls = "") {
-  return `<article class="card ${cls}"><h3>${html(title)}</h3>${body}</article>`;
 }
 
 function renderHome() {
@@ -210,7 +217,7 @@ function renderHome() {
       <div class="hero-copy">
         <span class="eyebrow">AI 발표평가 사전심사</span>
         <h1>실전 발표 전,<br><em>AI 심사위원</em>과 연습하세요</h1>
-        <p>발표 음성을 업로드하면 기존 파일 분석을 진행하고, 음성 파일이 없으면 실시간 STT 전사문으로 대체 분석할 수 있습니다.</p>
+        <p>발표자료를 띄워 실제처럼 연습하고, 페이지별 체류시간과 실시간 음성 전사를 함께 기록해 발표 구간을 분석합니다.</p>
         <button class="primary" onclick="setView('demo','upload')">사전심사 시작</button>
         <div class="hero-stats">
           <span><b>${ready() ? html(a.filler_total) : "-"}</b>추임새</span>
@@ -225,18 +232,18 @@ function renderHome() {
           <strong>${ready() ? html(a.score) : "--"}<small>/100점</small></strong>
         </div>
         ${Object.entries(voices).map(([k, v], i) => bar(k, v, i === 3 ? "yellow" : "blue")).join("")}
-        <p class="notice">${ready() ? html(a.summary || "분석이 완료되었습니다.") : "파일 또는 실시간 전사문이 생기기 전에는 평가 수치를 표시하지 않습니다."}</p>
+        <p class="notice">${ready() ? html(a.summary || "분석이 완료되었습니다.") : "파일 업로드 전에는 평가 수치를 표시하지 않습니다."}</p>
       </div>
     </section>
     <section class="section">
       <h2>발표평가 사전심사 프로세스</h2>
-      <p>음성 파일 분석, 실시간 STT 대체 입력, 자료 비교, 예상 질문, 종합 리포트까지 한 화면에서 처리합니다.</p>
+      <p>자료 등록, 발표 연습, 예상 질문, 분석 결과, 종합 리포트까지 한 화면에서 이어집니다.</p>
       <div class="grid4">
         ${[
-          ["발표 음성/실시간 STT", "파일이 없으면 실시간 전사문으로 대체"],
-          ["PPT/PDF 자료 업로드", "발표자료 텍스트 추출"],
-          ["AI 사전 분석", "CLOVA STT + Python + Claude"],
-          ["종합 평가 리포트", "점수와 개선점 도출"],
+          ["발표자료 등록", "PPT/PDF와 음성 파일 선택"],
+          ["발표 연습", "자료 페이지와 실시간 음성 구간 기록"],
+          ["AI 분석", "STT + Python 정량 계산 + Claude 평가"],
+          ["종합 리포트", "점수와 개선안 PDF 추출"],
         ].map((item, i) => `<article class="mini"><span>Step ${i + 1}</span><b>${item[0]}</b><small>${item[1]}</small></article>`).join("")}
       </div>
     </section>
@@ -247,18 +254,13 @@ function renderHome() {
         ${card("기술 전문가 AI", "<span class='badge blue'>TE</span><p>기술 실현 가능성, 특허, R&D 역량을 검토합니다.</p>")}
         ${card("산업 전문가 AI", "<span class='badge sky'>IE</span><p>시장성, 경쟁 환경, 진입 장벽을 검토합니다.</p>")}
       </div>
-    </section>
-    <section class="section">
-      <h2>5대 핵심 평가 항목</h2>
-      <div class="grid5">
-        ${["문제 정의 명확성", "솔루션 차별성", "시장 기회", "팀 역량", "비즈니스 모델"].map((t, i) => `<article class="mini"><span>${[20, 25, 20, 15, 20][i]}%</span><b>${t}</b><small>IR 심사 기준 기반 평가</small></article>`).join("")}
-      </div>
     </section>`;
 }
 
 function tabs() {
   const items = [
     ["upload", "등록 발표자료"],
+    ["practice", "발표 연습"],
     ["questions", "예상질문준비"],
     ["analysis", "분석결과"],
     ["summary", "종합결과"],
@@ -270,7 +272,7 @@ function renderDemo() {
   $("demoView").innerHTML = `
     <header class="page-head">
       <button class="link" onclick="setView('home')">← 발표평가로 돌아가기</button>
-      <div><p>발표 음성 / 실시간 STT</p></div>
+      <div><p>발표 음성 / 발표자료 / 실시간 연습</p></div>
       <button class="outline" onclick="downloadReport()">리포트 다운로드</button>
     </header>
     ${tabs()}
@@ -280,6 +282,7 @@ function renderDemo() {
 
 function renderTab() {
   if (state.tab === "upload") renderUpload();
+  if (state.tab === "practice") renderPractice();
   if (state.tab === "questions") renderQuestions();
   if (state.tab === "analysis") renderAnalysis();
   if (state.tab === "summary") renderSummary();
@@ -293,8 +296,8 @@ function renderUpload() {
     <section class="upload-layout">
       <div class="slide-preview">
         <div class="brain">AI</div>
-        <h1>더플랜AI</h1>
-        <p>발표 음성 파일이 있으면 파일 분석을 우선 사용하고, 없으면 아래 실시간 STT 전사문으로 대체 분석합니다.</p>
+        <h1>발표자료 등록</h1>
+        <p>음성 파일 없이도 발표 연습 탭에서 실시간 STT로 녹음하고 전사할 수 있습니다. PPT/PDF를 함께 올리면 페이지별 발표 구간을 기록합니다.</p>
         <div class="upload-duo">
           <label class="upload-box" for="audioInput">
             <input id="audioInput" type="file" accept=".mp3,.wav,.m4a,.aac,.flac,audio/*" onchange="handleAudioSelected(this)">
@@ -305,29 +308,453 @@ function renderUpload() {
             <span>PPT/PDF 발표자료 업로드</span><small>${html(materialName)}</small>
           </label>
         </div>
-        <button class="primary wide" onclick="analyzePresentation()" ${state.busy ? "disabled" : ""}>${state.busy ? "분석 중..." : "분석 시작하기"}</button>
+        <div class="action-row center">
+          <button class="primary" onclick="setTab('practice')">발표 연습으로 이동</button>
+          <button class="outline" onclick="analyzePresentation()" ${state.busy ? "disabled" : ""}>${state.busy ? "분석 중..." : "바로 분석하기"}</button>
+        </div>
       </div>
       <aside class="side-panel">
-        <h3>${a ? html(a.audio_name) : "발표자료 대기"}</h3>
+        <h3>${a ? html(a.audio_name) : "분석 대기"}</h3>
         <div class="metric3">
           <b>${a ? html(a.score) : "-"}</b><b>${a ? html(a.wpm) : "-"}</b><b>${a?.document_match?.available ? html(a.document_match.score) : "-"}</b>
           <small>종합점수</small><small>WPM</small><small>자료 일치율</small>
         </div>
-        ${a ? Object.entries(displayVoiceScores(a)).map(([k, v], i) => bar(k, v, i === 3 ? "purple" : "cyan")).join("") : "<p class='muted'>음성 파일이 있으면 기존 분석, 없으면 실시간 STT 전사문으로 대체 분석합니다.</p>"}
+        ${a ? Object.entries(displayVoiceScores(a)).map(([k, v], i) => bar(k, v, i === 3 ? "yellow" : "cyan")).join("") : "<p class='muted'>발표자료를 업로드하고 발표 연습을 시작하면 페이지별 체류시간과 음성 구간이 기록됩니다.</p>"}
       </aside>
     </section>
-    ${renderStreamingPanel()}`;
+    ${renderUploadTranslatePanel()}`;
 }
 
-function renderStreamingPanel() {
-  const timeline = state.streamingTimeline || [];
-  const recordingStatus = state.listening
-    ? "녹음 중"
-    : state.recordedBlob
-      ? "녹음 완료"
-      : "녹음 대기";
+function handleAudioSelected(input) {
+  state.selectedFile = input.files && input.files.length ? input.files[0] : null;
+  renderUpload();
+}
+
+function handleMaterialSelected(input) {
+  state.selectedMaterial = input.files && input.files.length ? input.files[0] : null;
+  state.materialPreview = null;
+  if (state.materialObjectUrl) URL.revokeObjectURL(state.materialObjectUrl);
+  state.materialObjectUrl = state.selectedMaterial ? URL.createObjectURL(state.selectedMaterial) : "";
+  renderUpload();
+}
+
+function handlePracticeMaterialSelected(input) {
+  state.practiceMaterial = input.files && input.files.length ? input.files[0] : null;
+  state.practicePreview = null;
+  state.practicePdfDoc = null;
+  state.practicePdfRenderKey = "";
+  if (state.practiceObjectUrl) URL.revokeObjectURL(state.practiceObjectUrl);
+  state.practiceObjectUrl = state.practiceMaterial ? URL.createObjectURL(state.practiceMaterial) : "";
+  state.practice.currentPage = 1;
+  state.practice.records = [];
+  renderPractice();
+}
+
+async function fetchMaterialPreview(file) {
+  const form = new FormData();
+  form.append("material", file);
+  const res = await fetch("/api/material-preview", { method: "POST", body: form });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || "발표자료 미리보기를 만들 수 없습니다.");
+  return data;
+}
+
+async function prepareMaterialPreview() {
+  if (!state.selectedMaterial) return null;
+  if (state.materialPreview) return state.materialPreview;
+  const data = await fetchMaterialPreview(state.selectedMaterial);
+  state.materialPreview = data;
+  return data;
+}
+
+async function preparePracticePreview() {
+  if (!state.practiceMaterial) return null;
+  if (state.practicePreview) return state.practicePreview;
+  const data = await fetchMaterialPreview(state.practiceMaterial);
+  if (String(data.type || "").toUpperCase() === "PDF") {
+    const pdfDoc = await loadPracticePdfDocument();
+    if (pdfDoc?.numPages) data.page_count = pdfDoc.numPages;
+  }
+  state.practicePreview = data;
+  return data;
+}
+
+function isPracticePdf() {
+  return String(state.practicePreview?.type || "").toUpperCase() === "PDF";
+}
+
+async function loadPracticePdfDocument() {
+  if (state.practicePdfDoc) return state.practicePdfDoc;
+  if (!state.practiceMaterial || !window.pdfjsLib) return null;
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc ||
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const data = await state.practiceMaterial.arrayBuffer();
+  state.practicePdfDoc = await window.pdfjsLib.getDocument({ data }).promise;
+  return state.practicePdfDoc;
+}
+
+async function renderPractice() {
+  if (!state.practiceMaterial) {
+    $("tabBody").innerHTML = `
+      <section class="practice-setup">
+        <h2>발표 연습 자료 첨부</h2>
+        <p>이 탭에서 사용할 PPT/PDF를 별도로 첨부하세요. 기존 등록 발표자료 기능은 그대로 유지됩니다.</p>
+        <label class="upload-box practice-upload" for="practiceMaterialInput">
+          <input id="practiceMaterialInput" type="file" accept=".pptx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation" onchange="handlePracticeMaterialSelected(this)">
+          <span>PPT/PDF 발표자료 첨부</span>
+          <small>발표 연습에서만 사용하는 자료입니다.</small>
+        </label>
+      </section>`;
+    return;
+  }
+  if (!state.practicePreview) {
+    $("tabBody").innerHTML = `<section class="empty">발표자료를 불러오는 중입니다.</section>`;
+    try {
+      await preparePracticePreview();
+    } catch (err) {
+      $("tabBody").innerHTML = `<section class="empty">${html(err.message || String(err))}</section>`;
+      return;
+    }
+  }
+
+  const preview = state.practicePreview || {};
+  const total = Math.max(1, Number(preview.page_count || preview.sections?.length || 1));
+  const current = Math.min(Math.max(1, state.practice.currentPage), total);
+  state.practice.currentPage = current;
+  $("tabBody").innerHTML = `
+    <section class="practice-layout">
+      <article class="practice-stage">
+        <div class="practice-toolbar">
+          <div>
+            <b>${html(state.practiceMaterial.name)}</b>
+            <span>${html(preview.type || "")} · ${current}/${total} 페이지</span>
+          </div>
+          <div class="practice-clock">
+            <strong id="practiceTotalClock">${formatClock(practiceElapsedSec())}</strong>
+            <small>전체 발표 시간</small>
+            <strong id="practicePageClock">${formatClock(currentPageElapsedSec())}</strong>
+            <small>현재 페이지</small>
+          </div>
+        </div>
+        ${renderMaterialPage(preview, current)}
+        <div class="practice-nav">
+          <button id="practicePrevBtn" class="outline" onclick="prevPracticePage()" ${current <= 1 || state.practice.active ? "disabled" : ""}>이전 페이지</button>
+          <div class="page-dots">${Array.from({ length: total }, (_, i) => `<button class="${i + 1 === current ? "active" : ""}" onclick="jumpPracticePage(${i + 1})" ${state.practice.active ? "disabled" : ""}>${i + 1}</button>`).join("")}</div>
+          <button id="practiceNextBtn" class="outline" onclick="nextPracticePage()" ${!state.practice.active && current >= total ? "disabled" : ""}>다음 페이지</button>
+        </div>
+      </article>
+      <aside class="practice-side">
+        <h3>실시간 발표 기록</h3>
+        <div class="metric2">
+          <b id="practiceSideClock">${formatClock(practiceElapsedSec())}</b><b id="practiceSegmentCount">${state.streamingTimeline.length}</b>
+          <small>녹음/전사 시간</small><small>전사 구간</small>
+        </div>
+        <div class="action-row">
+          <button id="practiceStartBtn" class="primary" onclick="startPractice()" ${state.practice.active ? "disabled" : ""}>발표 시작</button>
+          <button id="practiceFinishBtn" class="outline" onclick="finishPractice()" ${!state.practice.active ? "disabled" : ""}>발표 종료</button>
+          <button id="practiceAnalyzeBtn" class="outline" onclick="analyzePractice()" ${state.busy || state.practice.active || !practiceTranscript().trim() ? "disabled" : ""}>${state.busy ? "분석 중..." : "연습 분석하기"}</button>
+        </div>
+        <p class="muted">발표 시작을 누르면 마이크 녹음과 전사가 함께 시작됩니다. 다음 페이지를 누를 때마다 해당 페이지 체류시간과 음성 구간이 저장됩니다.</p>
+        ${renderPracticeRecords()}
+      </aside>
+    </section>`;
+  if (isPracticePdf()) {
+    renderPracticePdfPage(current);
+  }
+}
+
+function updatePracticeClocks() {
+  const total = $("practiceTotalClock");
+  const page = $("practicePageClock");
+  const side = $("practiceSideClock");
+  if (total) total.textContent = formatClock(practiceElapsedSec());
+  if (page) page.textContent = formatClock(currentPageElapsedSec());
+  if (side) side.textContent = formatClock(practiceElapsedSec());
+}
+
+function updatePracticeControls() {
+  const total = Math.max(1, Number(state.practicePreview?.page_count || state.practicePreview?.sections?.length || 1));
+  const start = $("practiceStartBtn");
+  const finish = $("practiceFinishBtn");
+  const analyze = $("practiceAnalyzeBtn");
+  const prev = $("practicePrevBtn");
+  const next = $("practiceNextBtn");
+  const count = $("practiceSegmentCount");
+  if (start) start.disabled = state.practice.active;
+  if (finish) finish.disabled = !state.practice.active;
+  if (analyze) {
+    analyze.disabled = state.busy || state.practice.active || !practiceTranscript().trim();
+    analyze.textContent = state.busy ? "분석 중..." : "연습 분석하기";
+  }
+  if (prev) prev.disabled = state.practice.active || state.practice.currentPage <= 1;
+  if (next) next.disabled = !state.practice.active && state.practice.currentPage >= total;
+  if (count) count.textContent = String(state.streamingTimeline.length);
+}
+
+function renderMaterialPage(preview, page) {
+  const type = String(preview.type || "").toUpperCase();
+  if (type === "PDF" && state.practiceObjectUrl) {
+    if (window.pdfjsLib) {
+      return `
+        <div id="practicePdfShell" class="pdf-page-shell">
+          <div class="pdf-zoom-tools">
+            <button class="outline compact" onclick="setPracticePdfZoom(-0.15)">축소</button>
+            <span>${Math.round(state.practicePdfZoom * 100)}%</span>
+            <button class="outline compact" onclick="setPracticePdfZoom(0.15)">확대</button>
+            <button class="outline compact" onclick="resetPracticePdfZoom()">맞춤</button>
+          </div>
+          <canvas id="practicePdfCanvas"></canvas>
+          <p class="muted">PDF ${page}페이지를 불러오는 중입니다.</p>
+        </div>`;
+    }
+    return `<iframe class="pdf-frame" src="${state.practiceObjectUrl}#page=${page}&zoom=page-fit&toolbar=0&navpanes=0&scrollbar=0"></iframe>`;
+  }
+  const section = (preview.sections || []).find((item) => Number(item.page) === page) || {};
   return `
-    <section class="streaming-panel">
+    <div class="pptx-page">
+      <span>Slide ${page}</span>
+      <h2>${html(section.title || `발표자료 ${page}`)}</h2>
+      <p>${html(section.text || "이 슬라이드는 이미지 중심이거나 텍스트를 추출할 수 없습니다. PDF로 변환하면 실제 페이지 형태로 확인할 수 있습니다.")}</p>
+    </div>`;
+}
+
+async function renderPracticePdfPage(pageNumber) {
+  const shell = $("practicePdfShell");
+  const canvas = $("practicePdfCanvas");
+  if (!shell || !canvas) return;
+  try {
+    const doc = await loadPracticePdfDocument();
+    if (!doc) return;
+    const page = await doc.getPage(Math.max(1, Math.min(pageNumber, doc.numPages)));
+    const baseViewport = page.getViewport({ scale: 1 });
+    const availableWidth = Math.max(520, shell.clientWidth - 32);
+    const cssWidth = availableWidth * state.practicePdfZoom;
+    const viewport = page.getViewport({ scale: cssWidth / baseViewport.width });
+    const outputScale = Math.min(window.devicePixelRatio || 1, 3);
+    const context = canvas.getContext("2d");
+    const key = `${pageNumber}-${Math.round(viewport.width)}x${Math.round(viewport.height)}-${outputScale}`;
+    if (canvas.dataset.renderKey === key) return;
+    state.practicePdfRenderKey = key;
+    canvas.dataset.renderKey = key;
+    canvas.width = Math.floor(viewport.width * outputScale);
+    canvas.height = Math.floor(viewport.height * outputScale);
+    canvas.style.width = `${Math.floor(viewport.width)}px`;
+    canvas.style.height = `${Math.floor(viewport.height)}px`;
+    context.setTransform(outputScale, 0, 0, outputScale, 0, 0);
+    context.clearRect(0, 0, viewport.width, viewport.height);
+    await page.render({ canvasContext: context, viewport }).promise;
+    const note = shell.querySelector("p");
+    if (note) note.remove();
+  } catch (err) {
+    shell.innerHTML = `<iframe class="pdf-frame" src="${state.practiceObjectUrl}#page=${pageNumber}&zoom=page-fit&toolbar=0&navpanes=0&scrollbar=0"></iframe>`;
+  }
+}
+
+function setPracticePdfZoom(delta) {
+  state.practicePdfZoom = Math.max(0.9, Math.min(2.4, Number((state.practicePdfZoom + delta).toFixed(2))));
+  state.practicePdfRenderKey = "";
+  renderPractice();
+}
+
+function resetPracticePdfZoom() {
+  state.practicePdfZoom = 1;
+  state.practicePdfRenderKey = "";
+  renderPractice();
+}
+
+function renderPracticeRecords() {
+  return `<div id="practiceRecords" class="practice-records">${practiceRecordsHtml()}</div>`;
+}
+
+function practiceRecordsHtml() {
+  const rows = state.practice.records || [];
+  const live = livePracticeRecord();
+  const allRows = live ? [...rows, live] : rows;
+  if (!allRows.length) return `<p class="muted">아직 기록된 페이지 구간이 없습니다. 발표 시작 후 실시간 로그가 표시됩니다.</p>`;
+  return `${allRows.map((r) => `
+    <div class="practice-record">
+      <b>Page ${html(r.page)}${r.live ? " · 진행 중" : ""}</b>
+      <span>${html(formatClock(r.start))}-${html(formatClock(r.end))} · ${html(formatDuration(r.duration))}</span>
+      <small>${html(r.transcript || "해당 구간 전사문 없음")}</small>
+    </div>`).join("")}`;
+}
+
+function livePracticeRecord() {
+  if (!state.practice.active || !state.practice.pageStartedAtMs || !state.practice.startedAtMs) return null;
+  const start = (state.practice.pageStartedAtMs - state.practice.startedAtMs) / 1000;
+  const end = practiceElapsedSec();
+  const transcript = transcriptForRange(start, end) || state.streamingInterim;
+  return {
+    page: state.practice.currentPage,
+    start,
+    end,
+    duration: Math.max(0, end - start),
+    transcript,
+    live: true,
+  };
+}
+
+function practiceTranscript() {
+  const parts = [];
+  if (state.streamingTranscript.trim()) parts.push(state.streamingTranscript.trim());
+  const recordText = (state.practice.records || [])
+    .map((record) => record.transcript || "")
+    .join("\n")
+    .trim();
+  if (recordText && !parts.includes(recordText)) parts.push(recordText);
+  if (state.streamingInterim.trim()) parts.push(state.streamingInterim.trim());
+  return parts.join("\n").trim();
+}
+
+function updatePracticeRecordsLive() {
+  const records = $("practiceRecords");
+  if (records) records.innerHTML = practiceRecordsHtml();
+}
+
+async function startPractice() {
+  if (!state.practiceMaterial) {
+    alert("먼저 PPT/PDF 발표자료를 업로드하세요.");
+    return;
+  }
+  await preparePracticePreview();
+  clearStreaming(false);
+  state.practice.active = true;
+  state.practice.startedAtMs = nowMs();
+  state.practice.pageStartedAtMs = nowMs();
+  state.practice.currentPage = 1;
+  state.practice.records = [];
+  state.practice.tick = window.setInterval(() => {
+    if (state.tab === "practice") {
+      updatePracticeClocks();
+      updatePracticeRecordsLive();
+    }
+  }, 1000);
+  updatePracticeControls();
+  await startStreaming({ renderAfterStart: false });
+  updatePracticeControls();
+}
+
+function transcriptForRange(start, end) {
+  return (state.streamingTimeline || [])
+    .filter((item) => Number(item.end || 0) >= start && Number(item.start || 0) <= end)
+    .map((item) => item.text)
+    .join(" ")
+    .trim();
+}
+
+function recordCurrentPracticePage() {
+  if (!state.practice.active || !state.practice.pageStartedAtMs || !state.practice.startedAtMs) return;
+  const start = (state.practice.pageStartedAtMs - state.practice.startedAtMs) / 1000;
+  const end = practiceElapsedSec();
+  const duration = Math.max(0, end - start);
+  if (duration < 0.3) return;
+  state.practice.records.push({
+    page: state.practice.currentPage,
+    start,
+    end,
+    duration,
+    transcript: transcriptForRange(start, end),
+  });
+  state.practice.pageStartedAtMs = nowMs();
+}
+
+function nextPracticePage() {
+  const total = Math.max(1, Number(state.practicePreview?.page_count || state.practicePreview?.sections?.length || 1));
+  if (state.practice.active) recordCurrentPracticePage();
+  if (state.practice.currentPage < total) {
+    state.practice.currentPage += 1;
+    state.practicePdfRenderKey = "";
+  } else if (state.practice.active) {
+    finishPractice();
+    return;
+  }
+  renderPractice();
+}
+
+function prevPracticePage() {
+  if (state.practice.active) return;
+  state.practice.currentPage = Math.max(1, state.practice.currentPage - 1);
+  state.practicePdfRenderKey = "";
+  renderPractice();
+}
+
+function jumpPracticePage(page) {
+  if (state.practice.active) return;
+  state.practice.currentPage = Math.max(1, Number(page || 1));
+  state.practicePdfRenderKey = "";
+  renderPractice();
+}
+
+function finishPractice() {
+  if (state.practice.active) recordCurrentPracticePage();
+  state.practice.active = false;
+  state.practice.startedAtMs = null;
+  state.practice.pageStartedAtMs = null;
+  if (state.practice.tick) window.clearInterval(state.practice.tick);
+  state.practice.tick = 0;
+  stopStreaming();
+  updatePracticeControls();
+  renderPractice();
+}
+
+function renderUploadTranslatePanel() {
+  const timeline = state.streamingTimeline || [];
+  return `
+    <section class="streaming-panel translate-only-panel">
+      <div class="panel-head">
+        <h2>실시간 한국어 STT / 번역</h2>
+        <span>${state.listening ? "전사 중" : html(state.uploadTranslationStatus)}</span>
+      </div>
+      <p class="muted">등록 발표자료 탭에서는 실시간 STT 전사와 번역만 진행합니다. 녹음 파일 저장과 발표 구간 분석은 발표 연습 탭에서 사용하세요.</p>
+      <div class="streaming-actions">
+        <button class="primary" onclick="startUploadStt()" ${state.listening ? "disabled" : ""}>실시간 STT 시작</button>
+        <button class="outline" onclick="stopStreaming()" ${!state.listening ? "disabled" : ""}>중지</button>
+        <label class="streaming-select">번역 언어
+          <select onchange="setTargetLang(this.value)">
+            ${[
+              ["en", "영어"], ["ja", "일본어"], ["zh", "중국어 간체"], ["es", "스페인어"],
+              ["fr", "프랑스어"], ["de", "독일어"], ["vi", "베트남어"], ["id", "인도네시아어"],
+            ].map(([value, label]) => `<option value="${value}" ${state.targetLang === value ? "selected" : ""}>${label}</option>`).join("")}
+          </select>
+        </label>
+        <button class="primary" onclick="translateUploadText()">번역하기</button>
+        <button class="outline" onclick="clearUploadTranslation()">지우기</button>
+      </div>
+      <div class="streaming-grid">
+        <article class="stream-box">
+          <h3>한국어 전사문 <span>${timeline.length}개 구간</span></h3>
+          <div class="stream-timeline">
+            ${timeline.length ? timeline.map((item, index) => `
+              <div class="stream-timeline-item">
+                <b>${html(item.time)}</b>
+                <span>구간 ${index + 1}</span>
+                <p>${html(item.text)}</p>
+              </div>`).join("") : `<p class="muted">실시간 STT 시작을 누르면 전사문이 표시됩니다. 직접 붙여넣기도 가능합니다.</p>`}
+            ${state.streamingInterim ? `<div class="stream-timeline-item interim"><b>${html(formatClock(streamingElapsedSec()))}</b><span>인식 중</span><p>${html(state.streamingInterim)}</p></div>` : ""}
+          </div>
+          <textarea class="manual-transcript" oninput="updateUploadTranslationText(this.value)" placeholder="번역할 전사문을 직접 수정하거나 붙여 넣을 수 있습니다.">${html(uploadTranslationSourceText())}</textarea>
+          <p class="muted">${uploadTranslationSourceText().replace(/\s/g, "").length}자 · 음성 파일 저장 없음</p>
+        </article>
+        <article class="stream-box">
+          <h3>번역 결과 <span>${html(state.uploadTranslationStatus)}</span></h3>
+          <div class="translation-box">${html(state.uploadTranslation)}</div>
+        </article>
+      </div>
+    </section>`;
+}
+
+async function startUploadStt() {
+  clearStreaming(false);
+  await startStreaming({ record: false });
+  renderUpload();
+}
+
+function renderStreamingPanel(compact = false) {
+  const timeline = state.streamingTimeline || [];
+  const recordingStatus = state.listening ? "녹음 중" : state.recordedBlob ? "녹음 완료" : "녹음 대기";
+  return `
+    <section id="streamingPanel" class="streaming-panel ${compact ? "compact" : ""}">
       <div class="panel-head">
         <h2>실시간 한국어 STT</h2>
         <span>${state.listening ? "전사/녹음 중" : "대기 중"}</span>
@@ -354,9 +781,9 @@ function renderStreamingPanel() {
             ${timeline.length ? timeline.map((item, index) => `
               <div class="stream-timeline-item">
                 <b>${html(item.time)}</b>
-                <span>구간 ${index + 1}</span>
+                <span>구간 ${index + 1}${item.page ? ` · Page ${html(item.page)}` : ""}</span>
                 <p>${html(item.text)}</p>
-              </div>`).join("") : `<p class="muted">실시간 STT 시작을 누르면 타임라인별 전사문이 여기에 표시됩니다.</p>`}
+              </div>`).join("") : `<p class="muted">실시간 STT 시작을 누르면 타임라인별 전사문이 표시됩니다.</p>`}
             ${state.streamingInterim ? `<div class="stream-timeline-item interim"><b>${html(formatClock(streamingElapsedSec()))}</b><span>인식 중</span><p>${html(state.streamingInterim)}</p></div>` : ""}
           </div>
           <textarea id="streamingText" class="manual-transcript" oninput="updateStreamingText(this.value)" placeholder="필요하면 전사문을 직접 수정할 수 있습니다.">${html(state.streamingTranscript)}</textarea>
@@ -368,23 +795,12 @@ function renderStreamingPanel() {
           <div class="translation-box">${html(state.translation)}</div>
         </article>
       </div>
-      <p class="muted">음성 파일이 없을 때는 이 전사문이 분석 입력으로 사용됩니다. 음성 파일이 있을 때는 보조 전사/번역 기능으로 사용할 수 있습니다.</p>
     </section>`;
-}
-
-function handleAudioSelected(input) {
-  state.selectedFile = input.files && input.files.length ? input.files[0] : null;
-  renderUpload();
-}
-
-function handleMaterialSelected(input) {
-  state.selectedMaterial = input.files && input.files.length ? input.files[0] : null;
-  renderUpload();
 }
 
 function createRecognition() {
   if (!SpeechRecognition) {
-    alert("이 브라우저는 실시간 음성 인식을 지원하지 않습니다. Chrome 또는 Edge를 사용해 주세요.");
+    alert("이 브라우저는 실시간 음성 인식을 지원하지 않습니다. Chrome 또는 Edge를 사용하세요.");
     return null;
   }
   const recognition = new SpeechRecognition();
@@ -394,8 +810,8 @@ function createRecognition() {
   recognition.maxAlternatives = 1;
   recognition.onstart = () => {
     state.listening = true;
-    if (!state.streamingStartMs) state.streamingStartMs = Date.now();
-    renderUpload();
+    if (!state.streamingStartMs) state.streamingStartMs = nowMs();
+    renderCurrent();
   };
   recognition.onresult = (event) => {
     let interim = "";
@@ -405,21 +821,25 @@ function createRecognition() {
       else interim += text;
     }
     state.streamingInterim = interim;
-    renderUpload();
+    renderCurrent();
   };
   recognition.onerror = (event) => {
     state.listening = false;
     if (state.mediaRecorder && state.mediaRecorder.state !== "inactive") state.mediaRecorder.stop();
     alert(event.error || "실시간 음성 인식 오류가 발생했습니다.");
-    renderUpload();
+    renderCurrent();
   };
   recognition.onend = () => {
     state.listening = false;
     state.streamingInterim = "";
     if (state.mediaRecorder && state.mediaRecorder.state !== "inactive") state.mediaRecorder.stop();
-    renderUpload();
+    renderCurrent();
   };
   return recognition;
+}
+
+function rebuildStreamingTranscript() {
+  state.streamingTranscript = state.streamingTimeline.map((item) => item.text).join("\n");
 }
 
 function addStreamingTimelineItem(text) {
@@ -429,6 +849,7 @@ function addStreamingTimelineItem(text) {
   const item = {
     start,
     end,
+    page: state.practice.active ? state.practice.currentPage : null,
     time: `${formatClock(start)}-${formatClock(end)}`,
     text,
   };
@@ -438,18 +859,19 @@ function addStreamingTimelineItem(text) {
 }
 
 function preferredRecordingMime() {
-  const candidates = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/mp4",
-    "audio/ogg;codecs=opus",
-  ];
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
   return candidates.find((type) => window.MediaRecorder && MediaRecorder.isTypeSupported(type)) || "";
+}
+
+function streamingFileName() {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
+  const ext = state.recordingMime.includes("mp4") ? "m4a" : state.recordingMime.includes("ogg") ? "ogg" : "webm";
+  return `streaming-stt-${stamp}.${ext}`;
 }
 
 async function startRecording() {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    alert("이 브라우저는 마이크 녹음을 지원하지 않습니다. Chrome 또는 Edge를 사용해 주세요.");
+    alert("이 브라우저는 마이크 녹음을 지원하지 않습니다. Chrome 또는 Edge를 사용하세요.");
     return false;
   }
   state.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -471,7 +893,7 @@ async function startRecording() {
     state.mediaStream?.getTracks().forEach((track) => track.stop());
     state.mediaStream = null;
     await saveStreamingAudio();
-    renderUpload();
+    renderCurrent();
   };
   state.mediaRecorder.start(1000);
   return true;
@@ -500,20 +922,23 @@ function downloadStreamingAudio() {
   link.click();
 }
 
-async function startStreaming() {
+async function startStreaming(options = {}) {
   if (!state.recognition) state.recognition = createRecognition();
   if (!state.recognition || state.listening) return;
-  state.streamingStartMs = Date.now();
+  state.streamingStartMs = nowMs();
   state.streamingLastFinalSec = 0;
   try {
-    const recordingReady = await startRecording();
-    if (!recordingReady) return;
+    if (options.record !== false) {
+      const recordingReady = await startRecording();
+      if (!recordingReady) return;
+    }
     state.recognition.start();
   } catch (err) {
     state.mediaStream?.getTracks().forEach((track) => track.stop());
     state.mediaStream = null;
     alert(err?.message || "실시간 STT/녹음을 시작하지 못했습니다.");
   }
+  if (options.renderAfterStart !== false) renderCurrent();
 }
 
 function stopStreaming() {
@@ -521,7 +946,7 @@ function stopStreaming() {
   if (state.mediaRecorder && state.mediaRecorder.state !== "inactive") state.mediaRecorder.stop();
 }
 
-function clearStreaming() {
+function clearStreaming(renderIt = true) {
   state.streamingTranscript = "";
   state.streamingInterim = "";
   state.streamingTimeline = [];
@@ -534,11 +959,19 @@ function clearStreaming() {
   state.recordingSavedPath = "";
   if (state.recordedAudioUrl) URL.revokeObjectURL(state.recordedAudioUrl);
   state.recordedAudioUrl = "";
-  renderUpload();
+  if (renderIt) renderCurrent();
 }
 
 function updateStreamingText(value) {
   state.streamingTranscript = value;
+}
+
+function updateUploadTranslationText(value) {
+  state.uploadTranslationText = value;
+}
+
+function uploadTranslationSourceText() {
+  return state.uploadTranslationText.trim() || state.streamingTranscript.trim();
 }
 
 function setTargetLang(value) {
@@ -552,7 +985,7 @@ async function translateStreaming() {
     return;
   }
   state.translationStatus = "번역 중";
-  renderUpload();
+  renderCurrent();
   try {
     const res = await fetch("/api/translate", {
       method: "POST",
@@ -567,13 +1000,99 @@ async function translateStreaming() {
     state.translation = err.message || String(err);
     state.translationStatus = "오류";
   }
+  renderCurrent();
+}
+
+async function translateUploadText() {
+  const text = uploadTranslationSourceText();
+  if (!text) {
+    alert("번역할 한국어 전사문이 없습니다.");
+    return;
+  }
+  state.uploadTranslationStatus = "번역 중";
   renderUpload();
+  try {
+    const res = await fetch("/api/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, target: state.targetLang }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "번역 실패");
+    state.uploadTranslation = data.translation;
+    state.uploadTranslationStatus = "완료";
+  } catch (err) {
+    state.uploadTranslation = err.message || String(err);
+    state.uploadTranslationStatus = "오류";
+  }
+  renderUpload();
+}
+
+function clearUploadTranslation() {
+  state.uploadTranslationText = "";
+  state.uploadTranslation = "";
+  state.uploadTranslationStatus = "대기";
+  renderUpload();
+}
+
+function practiceSlideRows() {
+  return (state.practice.records || []).map((record) => {
+    const words = (record.transcript || "").split(/\s+/).filter(Boolean).length;
+    const wpm = record.duration > 0 ? Math.round(words / record.duration * 60) : 0;
+    const fillerCount = ((record.transcript || "").match(/\b(어|아|음|그|이제|일단|뭐)\b/g) || []).length;
+    return {
+      slide: `Page ${record.page}`,
+      duration: `약 ${Math.round(record.duration)}초`,
+      recommended: "문장 단위 검토",
+      wpm: `${wpm} WPM`,
+      fillers: `${fillerCount}회`,
+      feedback: wpm > 150 ? "빠른 구간입니다. 핵심 문장 뒤에 멈춤을 넣어보세요." : wpm < 90 ? "느린 구간입니다. 불필요한 공백을 줄여보세요." : "속도와 흐름이 비교적 안정적입니다.",
+    };
+  });
+}
+
+function numericWpm(value) {
+  const match = String(value || "").match(/(\d+(?:\.\d+)?)/);
+  return match ? Number(match[1]) : 0;
+}
+
+function practiceAverageWpm(rows = practiceSlideRows()) {
+  const values = rows.map((row) => numericWpm(row.wpm)).filter((value) => value > 0);
+  if (!values.length) return 0;
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+function practicePaceSeries(rows = practiceSlideRows()) {
+  let cursor = 0;
+  return rows.map((row) => {
+    const seconds = Math.max(1, numericWpm(row.duration));
+    const start = cursor;
+    cursor += seconds;
+    const wpm = numericWpm(row.wpm);
+    return {
+      time: `${formatClock(start)}-${formatClock(cursor)}`,
+      wpm,
+      seconds,
+      words: Math.round(wpm * seconds / 60),
+    };
+  });
+}
+
+function applyPracticeMetrics(analysis) {
+  const rows = practiceSlideRows();
+  if (!rows.length) return analysis;
+  analysis.practice_segments = state.practice.records || [];
+  analysis.slide_rows = rows;
+  analysis.wpm = practiceAverageWpm(rows);
+  analysis.pace_series = practicePaceSeries(rows);
+  analysis.practice_summary = `${state.practice.records.length}개 페이지 구간 기준으로 실시간 음성과 발표자료 페이지를 매칭했습니다.`;
+  return analysis;
 }
 
 async function analyzePresentation() {
   const transcript = state.streamingTranscript.trim();
   if (!state.selectedFile && !transcript) {
-    alert("발표 음성 파일을 선택하거나 실시간 STT 전사문을 입력해 주세요.");
+    alert("발표 음성 파일을 선택하거나 발표 연습/실시간 STT 전사문을 생성하세요.");
     return;
   }
   state.busy = true;
@@ -583,10 +1102,45 @@ async function analyzePresentation() {
     if (state.selectedFile) form.append("audio", state.selectedFile);
     if (state.selectedMaterial) form.append("material", state.selectedMaterial);
     if (transcript) form.append("streaming_transcript", transcript);
+    if (state.streamingTimeline.length) form.append("streaming_timeline", JSON.stringify(state.streamingTimeline));
     const res = await fetch("/api/analyze", { method: "POST", body: form });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || "분석 실패");
-    state.analysis = data.analysis;
+    const analysis = data.analysis || {};
+    if (state.practice.records.length) {
+      applyPracticeMetrics(analysis);
+    }
+    state.analysis = analysis;
+    state.tab = "analysis";
+  } catch (err) {
+    alert(err.message || String(err));
+  } finally {
+    state.busy = false;
+    render();
+  }
+}
+
+async function analyzePractice() {
+  const transcript = practiceTranscript();
+  if (!transcript) {
+    alert("발표 연습 전사문이 없습니다. 발표 시작 후 실시간 STT를 먼저 진행하세요.");
+    return;
+  }
+  state.busy = true;
+  updatePracticeControls();
+  try {
+    const form = new FormData();
+    if (state.practiceMaterial) form.append("material", state.practiceMaterial);
+    form.append("streaming_transcript", transcript);
+    form.append("streaming_timeline", JSON.stringify(state.streamingTimeline));
+    const res = await fetch("/api/analyze", { method: "POST", body: form });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "분석 실패");
+    const analysis = data.analysis || {};
+    if (state.practice.records.length) {
+      applyPracticeMetrics(analysis);
+    }
+    state.analysis = analysis;
     state.tab = "analysis";
   } catch (err) {
     alert(err.message || String(err));
@@ -599,6 +1153,42 @@ async function analyzePresentation() {
 function questions() {
   const q = cleanQuestions(state.analysis?.questions || []);
   return q.length ? q : [{ category: "대기", question: "발표 음성 또는 전사문을 분석하면 예상 질문이 생성됩니다.", level: "-" }];
+}
+
+function goQuestion(index) {
+  const list = questions();
+  state.qaIndex = Math.max(0, Math.min(list.length - 1, index));
+  renderQuestions();
+}
+
+function moveQuestion(delta) {
+  goQuestion(state.qaIndex + delta);
+}
+
+async function evaluateAnswer() {
+  if (!ready()) {
+    alert("먼저 발표를 분석해 주세요.");
+    return;
+  }
+  const answer = $("answerText").value.trim();
+  if (!answer) {
+    alert("답변을 입력해 주세요.");
+    return;
+  }
+  const idx = state.qaIndex;
+  state.qaAnswers[idx] = answer;
+  const res = await fetch("/api/evaluate-answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question: questions()[idx], answer, transcript: state.analysis.transcript || "" }),
+  });
+  const data = await res.json();
+  state.qaResults[idx] = data.result || {};
+  renderQuestions();
+}
+
+function renderAnswerResult(r) {
+  return `<article class="answer-card"><h3>AI 답변 평가 <span>${scoreOf(r.score)}점</span></h3><div class="two"><div><b>강점</b><ul>${(r.strengths || []).map((x) => `<li>${html(x)}</li>`).join("") || "<li>분석 결과 없음</li>"}</ul></div><div><b>개선점</b><ul>${(r.improvements || []).map((x) => `<li>${html(x)}</li>`).join("") || "<li>분석 결과 없음</li>"}</ul></div></div><p><b>모범 답변 예시</b><br>${html(r.model_answer || "")}</p></article>`;
 }
 
 function renderQuestions() {
@@ -629,53 +1219,12 @@ function renderQuestions() {
       <aside class="side-panel">
         <h3>예상질문 연습</h3>
         <div class="metric2">
-          <b>${Object.keys(state.qaResults).length}/${list.length}</b><b>${result?.score || "-"}</b>
+          <b>${Object.keys(state.qaResults).length}/${list.length}</b><b>${result ? scoreOf(result.score) : "-"}</b>
           <small>완료한 질문</small><small>현재 점수</small>
         </div>
-        ${bar("논리성", result?.logic || 0)}
-        ${bar("구체성", result?.specificity || 0, "green")}
-        ${bar("자신감", result?.confidence || 0, "purple")}
-        ${bar("시간 관리", result?.time_control || 0, "yellow")}
+        ${["논리성", "구체성", "자신감", "시간 관리"].map((k, i) => bar(k, result ? scoreOf(result[k] || result.score || 0) : 0, i === 3 ? "yellow" : "cyan")).join("")}
       </aside>
     </section>`;
-}
-
-function goQuestion(i) {
-  const area = $("answerText");
-  if (area) state.qaAnswers[state.qaIndex] = area.value;
-  state.qaIndex = i;
-  renderQuestions();
-}
-
-function moveQuestion(delta) {
-  const len = questions().length;
-  goQuestion(Math.max(0, Math.min(len - 1, state.qaIndex + delta)));
-}
-
-async function evaluateAnswer() {
-  if (!ready()) {
-    alert("먼저 발표를 분석해 주세요.");
-    return;
-  }
-  const answer = $("answerText").value.trim();
-  if (!answer) {
-    alert("답변을 입력해 주세요.");
-    return;
-  }
-  const idx = state.qaIndex;
-  state.qaAnswers[idx] = answer;
-  const res = await fetch("/api/evaluate-answer", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question: questions()[idx], answer, transcript: state.analysis.transcript || "" }),
-  });
-  const data = await res.json();
-  state.qaResults[idx] = data.result || {};
-  renderQuestions();
-}
-
-function renderAnswerResult(r) {
-  return `<article class="answer-card"><h3>AI 답변 평가 <span>${scoreOf(r.score)}점</span></h3><div class="two"><div><b>강점</b><ul>${(r.strengths || []).map((x) => `<li>${html(x)}</li>`).join("") || "<li>분석 결과 없음</li>"}</ul></div><div><b>개선점</b><ul>${(r.improvements || []).map((x) => `<li>${html(x)}</li>`).join("") || "<li>분석 결과 없음</li>"}</ul></div></div><p><b>모범 답변 예시</b><br>${html(r.model_answer || "")}</p></article>`;
 }
 
 function renderAnalysis() {
@@ -693,6 +1242,7 @@ function renderAnalysis() {
       ${card("어휘 문제", `<strong>${metricCount(a.vocab_issues, a.vocab_suggestions)}<small>건</small></strong>`)}
     </section>
     ${matchCard}
+    ${a.practice_summary ? card("발표 연습 구간 매칭", `<p>${html(a.practice_summary)}</p>${renderPracticeAnalysisTable(a.practice_segments || [])}`, "full") : ""}
     <section class="analysis-grid">
       ${card("발화 속도 분석", `<canvas id="paceChart" width="720" height="360"></canvas><p class="muted">권장 범위: 120-150 WPM</p>`, "chart-card")}
       ${card("음성 품질 분석", Object.entries(displayVoiceScores(a)).map(([k, v], i) => bar(k, v, i === 3 ? "yellow" : "cyan")).join(""))}
@@ -705,6 +1255,11 @@ function renderAnalysis() {
     </section>
     ${card("슬라이드별 분석", renderSlideRows(a.slide_rows || []), "full")}`;
   drawPaceChart(a.pace_series || [], a.wpm || 140);
+}
+
+function renderPracticeAnalysisTable(rows) {
+  if (!rows.length) return "";
+  return `<table><thead><tr><th>페이지</th><th>시작</th><th>종료</th><th>체류시간</th><th>전사 구간</th></tr></thead><tbody>${rows.map((r) => `<tr><td>Page ${html(r.page)}</td><td>${html(formatClock(r.start))}</td><td>${html(formatClock(r.end))}</td><td>${html(formatDuration(r.duration))}</td><td>${html(r.transcript || "-")}</td></tr>`).join("")}</tbody></table>`;
 }
 
 function renderDocumentMatch(match) {
@@ -725,26 +1280,29 @@ function renderVocab(items) {
   const rows = cleanVocabItems(items);
   if (!rows.length) return "<p class='muted'>감지된 어휘 개선 항목이 없습니다.</p>";
   return rows.map((x) => {
-    const original = x.original || "";
-    const replacement = x.replacement || "";
-    const reason = x.reason || "";
-    const body = replacement
-      ? `<p class="vocab-pair"><b>${html(original || "-")}</b><span>→</span><em>${html(replacement)}</em></p>`
-      : `<p class="vocab-single"><b>${html(original || reason || "-")}</b></p>`;
-    return `<div class="vocab"><small>개선 표현</small>${body}${reason && reason !== original ? `<span>${html(reason)}</span>` : ""}</div>`;
+    const body = x.replacement
+      ? `<p class="vocab-pair"><b>${html(x.original || "-")}</b><span>→</span><em>${html(x.replacement)}</em></p>`
+      : `<p class="vocab-single"><b>${html(x.original || x.reason || "-")}</b></p>`;
+    return `<div class="vocab"><small>개선 표현</small>${body}${x.reason && x.reason !== x.original ? `<span>${html(x.reason)}</span>` : ""}</div>`;
   }).join("");
 }
 
 function renderSpeakers(items) {
-  const rows = displaySpeakers(items);
-  if (!rows.length) return "<p class='muted'>스트리밍 전사문 분석에서는 화자 분리 정보가 없을 수 있습니다.</p>";
-  return `<table><thead><tr><th>화자</th><th>문장</th><th>발화시간</th><th>WPM</th><th>추임새</th></tr></thead><tbody>${rows.map((s) => `<tr><td>${html(s.speaker)}</td><td>${html(s.sentences)}</td><td>${html(s.seconds)}초</td><td>${html(s.wpm)}</td><td>${html(s.fillers)}회</td></tr>`).join("")}</tbody></table>`;
+  const rows = Array.isArray(items) ? items : [];
+  if (!rows.length) return "<p class='muted'>화자 분리 정보가 없습니다.</p>";
+  return `<table><thead><tr><th>화자</th><th>문장</th><th>발화시간</th><th>WPM</th><th>추임새</th></tr></thead><tbody>${rows.map((s) => `<tr><td>${html(cleanSpeaker(s.speaker))}</td><td>${html(s.sentences)}</td><td>${html(s.seconds)}초</td><td>${html(s.wpm)}</td><td>${html(s.fillers)}회</td></tr>`).join("")}</tbody></table>`;
+}
+
+function formatGap(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number) || number <= 0) return "0";
+  return number < 1 ? number.toFixed(2).replace(/0+$/, "").replace(/\.$/, "") : number.toFixed(1).replace(/\.0$/, "");
 }
 
 function renderTimeline(items) {
-  const rows = displayTimelineItems(items);
+  const rows = Array.isArray(items) ? items : [];
   if (!rows.length) return "<p class='muted'>문장별 timestamp가 없습니다.</p>";
-  return `<p class="muted">전체 ${rows.length}개 문장</p><div class="timeline-list">${rows.map((x) => `<div class="timeline-item"><b>${html(x.time)}</b><span>${html(x.speaker)} · 구간 ${html(x.section)} · 공백 ${html(formatGap(x.gap_before))}초</span><p>${html(x.text)}</p></div>`).join("")}</div>`;
+  return `<p class="muted">전체 ${rows.length}개 문장</p><div class="timeline-list">${rows.map((x) => `<div class="timeline-item"><b>${html(x.time)}</b><span>${html(cleanSpeaker(x.speaker))} · 구간 ${html(x.section)} · 공백 ${html(formatGap(x.gap_before))}초</span><p>${html(x.text)}</p></div>`).join("")}</div>`;
 }
 
 function renderSlideRows(rows) {
@@ -857,6 +1415,17 @@ async function downloadReport() {
   link.download = "presentation-review-report.pdf";
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function renderCurrent() {
+  if (state.view === "demo" && state.tab === "practice" && state.practice.active) {
+    updatePracticeClocks();
+    updatePracticeRecordsLive();
+    updatePracticeControls();
+    return;
+  }
+  if (state.view === "demo") renderTab();
+  else render();
 }
 
 function render() {
