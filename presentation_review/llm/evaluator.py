@@ -59,8 +59,7 @@ def call_claude(system_prompt: str, user_prompt: str, max_tokens: int = 4096) ->
         with request.urlopen(req, timeout=CLAUDE_TIMEOUT_SECONDS) as res:
             data = json.loads(res.read().decode("utf-8"))
     except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Claude API {exc.code}: {detail}") from exc
+        raise RuntimeError(f"Claude API request failed with status {exc.code}") from exc
     return parse_json_object(extract_claude_text(data))
 
 
@@ -114,7 +113,7 @@ def fallback_analysis(transcript: str, audio_name: str, message: str = "") -> di
         "transcript": transcript,
         "score": 0,
         "grade": "-",
-        "status": "모델 평가 필요",
+        "status": "기본 평가 제공",
         "wpm": wpm,
         "filler_total": sum(item["count"] for item in fillers),
         "vocab_issues": 0,
@@ -128,9 +127,9 @@ def fallback_analysis(transcript: str, audio_name: str, message: str = "") -> di
         "slide_rows": [],
         "problems": [],
         "questions": [],
-        "summary": message or "Claude 모델 평가가 완료되지 않았습니다.",
+        "summary": message or "AI 종합평가는 기본 정량 지표 기반으로 생성되었습니다.",
         "improvement_priorities": [],
-        "analysis_source": "모델 평가 미완료",
+        "analysis_source": "Python deterministic fallback",
         "llm_used": False,
     }
 
@@ -160,6 +159,7 @@ def enrich_fallback_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
     ]
     if not analysis.get("summary"):
         analysis["summary"] = "CLOVA 전사와 timestamp 기준으로 기본 평가를 생성했습니다."
+    analysis["llm_notice"] = "Claude 호출이 불가한 경우에도 Python 정량 지표 기반 평가를 표시합니다."
     return analysis
 
 
@@ -363,7 +363,11 @@ def llm_analysis(transcript: str, audio_name: str, measured_pace: list[dict[str,
         base["pace_series"] = measured_pace
         base["wpm"] = overall_wpm_from_pace(measured_pace, base["wpm"])
     if not HAS_CLAUDE:
-        no_key = fallback_analysis(transcript, audio_name, "Claude API key is missing.")
+        no_key = fallback_analysis(
+            transcript,
+            audio_name,
+            "Claude API 키가 없어 Python 정량 지표 기반 종합평가를 표시합니다.",
+        )
         no_key.update({
             "pace_series": base.get("pace_series", []),
             "wpm": base.get("wpm"),
@@ -374,7 +378,7 @@ def llm_analysis(transcript: str, audio_name: str, measured_pace: list[dict[str,
         })
         return sync_consistent_counts(enrich_fallback_analysis(no_key))
     if not transcript.strip():
-        return fallback_analysis(transcript, audio_name, "CLOVA Speech transcript is empty.")
+        return fallback_analysis(transcript, audio_name, "전사문이 비어 있어 평가할 수 없습니다.")
 
     system_prompt = "You are a Korean IR presentation reviewer. Return JSON only."
     user_prompt = (
@@ -395,8 +399,12 @@ def llm_analysis(transcript: str, audio_name: str, measured_pace: list[dict[str,
         result["slide_rows"] = section_rows_from_segments(sentence_segments, measured_pace) or result.get("slide_rows", [])
         result["quantitative_metrics"] = quantitative_metrics
         return sync_consistent_counts(result)
-    except Exception as exc:
-        failed = fallback_analysis(transcript, audio_name, f"Claude model evaluation failed: {exc}")
+    except Exception:
+        failed = fallback_analysis(
+            transcript,
+            audio_name,
+            "Claude 호출이 제한되어 Python 정량 지표 기반 종합평가를 표시합니다.",
+        )
         failed.update({
             "pace_series": base.get("pace_series", []),
             "wpm": base.get("wpm"),
@@ -410,7 +418,7 @@ def llm_analysis(transcript: str, audio_name: str, measured_pace: list[dict[str,
 
 def evaluate_qa_answer(question: dict[str, Any], answer: str, transcript: str) -> dict[str, Any]:
     if not HAS_CLAUDE:
-        return {"score": 0, "logic": 0, "specificity": 0, "confidence": 0, "time_control": 0, "strengths": [], "improvements": ["Claude API 키가 없습니다."], "model_answer": "", "tags": []}
+        return {"score": 0, "logic": 0, "specificity": 0, "confidence": 0, "time_control": 0, "strengths": [], "improvements": ["현재 답변 평가는 사용할 수 없습니다. 발표 분석의 예상 질문을 기준으로 답변을 보강해 주세요."], "model_answer": "", "tags": []}
     system_prompt = "너는 한국어 IR 발표 Q&A 심사위원이다. 설명 문장 없이 JSON 객체만 반환한다."
     user_prompt = (
         "예상 질문에 대한 발표자의 답변을 평가하라. JSON 형식: "
@@ -419,8 +427,8 @@ def evaluate_qa_answer(question: dict[str, Any], answer: str, transcript: str) -
     )
     try:
         judged = call_claude(system_prompt, user_prompt, max_tokens=2500)
-    except Exception as exc:
-        return {"score": 0, "logic": 0, "specificity": 0, "confidence": 0, "time_control": 0, "strengths": [], "improvements": [f"답변 평가 오류: {exc}"], "model_answer": "", "tags": []}
+    except Exception:
+        return {"score": 0, "logic": 0, "specificity": 0, "confidence": 0, "time_control": 0, "strengths": [], "improvements": ["현재 답변 평가는 사용할 수 없습니다. 잠시 후 다시 시도해 주세요."], "model_answer": "", "tags": []}
     return {
         "score": normalize_score(judged.get("score"), 0),
         "logic": normalize_score(judged.get("logic"), 0),

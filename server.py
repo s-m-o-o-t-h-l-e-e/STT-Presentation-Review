@@ -1,5 +1,6 @@
 ﻿import cgi
 import json
+import logging
 import re
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +16,8 @@ from presentation_review.materials.extractor import extract_material_text
 
 ROOT = Path(__file__).parent
 RECORDING_DIR = ROOT / "output" / "recordings"
+logging.basicConfig(level=logging.INFO)
+LOGGER = logging.getLogger("presentation-review")
 STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
@@ -49,7 +52,7 @@ class UploadedFile:
 
 def translate_text(text: str, target: str) -> str:
     if not CLAUDE_API_KEY:
-        raise RuntimeError(".env에 CLAUDE_API_KEY가 없습니다.")
+        raise RuntimeError("translation unavailable")
     language = TRANSLATION_LANGUAGES.get(target, "English")
     payload = {
         "model": CLAUDE_MODEL,
@@ -78,8 +81,7 @@ def translate_text(text: str, target: str) -> str:
         with request.urlopen(req, timeout=CLAUDE_TIMEOUT_SECONDS) as res:
             data = json.loads(res.read().decode("utf-8"))
     except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Claude API 오류 {exc.code}: {detail}") from exc
+        raise RuntimeError(f"translation request failed with status {exc.code}") from exc
 
     chunks = []
     for item in data.get("content", []):
@@ -138,8 +140,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.handle_report()
             else:
                 self.send_error(404)
-        except Exception as exc:
-            self.send_json({"ok": False, "error": str(exc)}, 500)
+        except Exception:
+            LOGGER.exception("Request failed: %s", path)
+            self.send_json({"ok": False, "error": "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요."}, 500)
 
     def material_from_form(self, form: cgi.FieldStorage) -> UploadedFile | None:
         material_field = form["material"] if "material" in form else None

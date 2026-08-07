@@ -7,7 +7,7 @@ __pycache__/
 *.pyo
 
 output/
-reports/
+/reports/
 dist/
 build/
 .streamlit/secrets.toml

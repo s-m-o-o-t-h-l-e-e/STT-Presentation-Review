@@ -3,6 +3,16 @@
 발표 음성을 STT로 전사하고, 발표 속도/추임새/문장 구간/자료 반영률을 같이 보는 발표 평가 프로젝트입니다.  
 기본 기능은 발표 자료와 음성을 올려 분석하는 쪽이고, `evaluation/`에는 STT 모델 5개를 따로 비교한 CER 실험 파일을 모아뒀습니다.
 
+## Reviewer / Data Availability
+
+논문 심사용 공개 자료는 저장소 루트의 `benchmark/` 폴더에 정리했습니다. 이 폴더에는 전사 원문과 음성 파일을 제외한 CER 수치 CSV, 평균 검증 스크립트, 업로드 가이드만 포함됩니다.
+
+```bash
+python benchmark/verify_cer_summary.py
+```
+
+벤치마크 호출 기록: `2026-07-22 17:29:04 +0900` 생성 결과 기준이며, 사용 STT 엔진은 CLOVA Speech recognizer upload API, Azure Speech conversation recognition v1 (`ko-KR`), OpenAI Whisper API `whisper-1`, Google Speech-to-Text v2 `latest_long`, AssemblyAI v2 transcript API입니다.
+
 ## 주요 기능
 
 - 발표 음성 업로드 후 STT 전사
@@ -19,7 +29,7 @@
 
 ```powershell
 pip install -r requirements.txt
-python server.py
+python3 server.py
 ```
 
 브라우저에서 아래 주소로 접속합니다.
@@ -51,6 +61,8 @@ ASSEMBLYAI_API_KEY
 
 `.env.example`은 어떤 값을 넣어야 하는지 보는 샘플 파일입니다. 실제 키는 넣지 않습니다.
 
+공개 저장소에는 `.env`, `.env.private`, `secrets/`, 원본 음성 데이터, 원문 전사 파일을 올리지 않습니다. API 호출 실패나 크레딧 제한이 있어도 화면에는 내부 에러 원문 대신 사용자용 안내와 Python 정량 지표 기반 fallback 평가가 표시됩니다.
+
 ## 폴더 구조
 
 ```text
@@ -77,6 +89,12 @@ stt-presentation-review/
     run_stt_model_cer_benchmark.py
     verify_cer_summary.py
     results/
+
+  benchmark/
+    README.md
+    UPLOAD_GUIDE.md
+    verify_cer_summary.py
+    results/
 ```
 
 ## 모델 비교 실험
@@ -96,6 +114,8 @@ evaluation/results/stt_model_cer_by_audio_file.csv
 evaluation/results/stt_model_average_cer_summary.csv
 evaluation/results/stt_model_transcripts_and_cer_details.csv
 ```
+
+논문 공개용 `benchmark/` 폴더에는 라이선스 이슈가 있는 전사 원문 CSV를 포함하지 않습니다.
 
 ## CER 계산 방식
 

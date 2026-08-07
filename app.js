@@ -60,6 +60,7 @@ const html = (value = "") => String(value)
 const scoreOf = (value) => Math.max(0, Math.min(100, Number(value || 0)));
 const ready = () => Boolean(state.analysis);
 const nowMs = () => Date.now();
+const userErrorMessage = (fallback = "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.") => fallback;
 
 function formatClock(seconds = 0) {
   const total = Math.max(0, Number(seconds || 0));
@@ -413,7 +414,7 @@ async function renderPractice() {
     try {
       await preparePracticePreview();
     } catch (err) {
-      $("tabBody").innerHTML = `<section class="empty">${html(err.message || String(err))}</section>`;
+      $("tabBody").innerHTML = `<section class="empty">${html(userErrorMessage("발표자료를 불러오지 못했습니다. 파일 형식을 확인해 주세요."))}</section>`;
       return;
     }
   }
@@ -826,7 +827,7 @@ function createRecognition() {
   recognition.onerror = (event) => {
     state.listening = false;
     if (state.mediaRecorder && state.mediaRecorder.state !== "inactive") state.mediaRecorder.stop();
-    alert(event.error || "실시간 음성 인식 오류가 발생했습니다.");
+    alert("실시간 음성 인식 오류가 발생했습니다. 브라우저 권한과 마이크 상태를 확인해 주세요.");
     renderCurrent();
   };
   recognition.onend = () => {
@@ -936,7 +937,7 @@ async function startStreaming(options = {}) {
   } catch (err) {
     state.mediaStream?.getTracks().forEach((track) => track.stop());
     state.mediaStream = null;
-    alert(err?.message || "실시간 STT/녹음을 시작하지 못했습니다.");
+    alert(userErrorMessage("실시간 STT/녹음을 시작하지 못했습니다. 브라우저 권한을 확인해 주세요."));
   }
   if (options.renderAfterStart !== false) renderCurrent();
 }
@@ -997,7 +998,7 @@ async function translateStreaming() {
     state.translation = data.translation;
     state.translationStatus = "완료";
   } catch (err) {
-    state.translation = err.message || String(err);
+    state.translation = userErrorMessage("번역을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.");
     state.translationStatus = "오류";
   }
   renderCurrent();
@@ -1022,7 +1023,7 @@ async function translateUploadText() {
     state.uploadTranslation = data.translation;
     state.uploadTranslationStatus = "완료";
   } catch (err) {
-    state.uploadTranslation = err.message || String(err);
+    state.uploadTranslation = userErrorMessage("번역을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.");
     state.uploadTranslationStatus = "오류";
   }
   renderUpload();
@@ -1113,7 +1114,7 @@ async function analyzePresentation() {
     state.analysis = analysis;
     state.tab = "analysis";
   } catch (err) {
-    alert(err.message || String(err));
+    alert(userErrorMessage("분석을 완료하지 못했습니다. 입력 파일과 전사문을 확인해 주세요."));
   } finally {
     state.busy = false;
     render();
@@ -1143,7 +1144,7 @@ async function analyzePractice() {
     state.analysis = analysis;
     state.tab = "analysis";
   } catch (err) {
-    alert(err.message || String(err));
+    alert(userErrorMessage("분석을 완료하지 못했습니다. 입력 파일과 전사문을 확인해 주세요."));
   } finally {
     state.busy = false;
     render();
