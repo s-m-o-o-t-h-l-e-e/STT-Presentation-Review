@@ -336,39 +336,78 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
     final analysis = _analysis;
     if (analysis == null) return;
     _showSnack('PDF 리포트를 만드는 중입니다.');
-    await _runBusy(() async {
-      _safeSetState(() => _status = 'PDF 리포트를 만드는 중입니다.');
+    _safeSetState(() {
+      _busy = true;
+      _status = 'PDF 리포트를 만드는 중입니다.';
+    });
+    try {
       final bytes = await ReportBuilder().build(analysis);
+      _safeSetState(() => _status = 'PDF 파일을 앱 내부에 저장하는 중입니다.');
       final fileName =
           'presentation-review-${DateTime.now().millisecondsSinceEpoch}.pdf';
       final dir = await getApplicationDocumentsDirectory();
       final backupPath = '${dir.path}/$fileName';
-      final reportFile = await File(backupPath).writeAsBytes(bytes);
+      final reportFile = await File(
+        backupPath,
+      ).writeAsBytes(bytes, flush: true);
 
       if (Platform.isAndroid) {
-        final result = await _reportChannel.invokeMapMethod<String, dynamic>(
-          'savePdf',
-          {'filePath': reportFile.path, 'fileName': fileName},
-        );
-        final opened = result?['opened'] == true;
-        _safeSetState(() {
-          _status = opened
-              ? 'PDF 리포트를 Downloads에 저장하고 열었습니다.'
-              : 'PDF 리포트를 Downloads에 저장했습니다. PDF 뷰어 앱이 없으면 파일 앱에서 열어주세요.';
-        });
-        _showSnack(
-          opened
-              ? 'Downloads에 저장했고 PDF 열기를 실행했습니다.'
-              : 'Downloads에 PDF를 저장했습니다.',
-        );
-        return;
+        await _saveAndroidReport(reportFile.path, fileName, backupPath);
+      } else {
+        await _shareReport(reportFile.path, fileName);
       }
+    } catch (error, stackTrace) {
+      debugPrint('PDF report save failed: $error\n$stackTrace');
+      _safeSetState(() {
+        _status = '오류: PDF 저장 실패 - $error';
+      });
+      _showSnack('PDF 저장 실패: $error');
+    } finally {
+      _safeSetState(() => _busy = false);
+    }
+  }
 
+  Future<void> _saveAndroidReport(
+    String filePath,
+    String fileName,
+    String backupPath,
+  ) async {
+    _safeSetState(() => _status = 'PDF를 Downloads에 저장하는 중입니다.');
+    try {
+      final result = await _reportChannel.invokeMapMethod<String, dynamic>(
+        'savePdf',
+        {'filePath': filePath, 'fileName': fileName},
+      );
+      final opened = result?['opened'] == true;
+      _safeSetState(() {
+        _status = opened
+            ? 'PDF 리포트를 Downloads에 저장하고 열었습니다.'
+            : 'PDF 리포트를 Downloads에 저장했습니다. PDF 뷰어 앱이 없으면 파일 앱에서 열어주세요.';
+      });
+      _showSnack(
+        opened ? 'Downloads에 저장했고 PDF 열기를 실행했습니다.' : 'Downloads에 PDF를 저장했습니다.',
+      );
+    } on MissingPluginException catch (error) {
+      _safeSetState(() {
+        _status =
+            '오류: Android 저장 기능이 현재 실행 중인 앱에 반영되지 않았습니다. 앱을 완전히 종료 후 다시 실행하세요. 앱 내부 백업: $backupPath ($error)';
+      });
+      _showSnack('앱 내부에는 PDF가 저장됐습니다. 앱을 완전히 종료 후 다시 실행하세요.');
+    } catch (error) {
+      _safeSetState(() {
+        _status =
+            '오류: Downloads 저장 실패 - 앱 내부 백업은 완료되었습니다: $backupPath ($error)';
+      });
+      _showSnack('Downloads 저장 실패. 앱 내부 백업은 완료됐습니다.');
+    }
+  }
+
+  Future<void> _shareReport(String filePath, String fileName) async {
+    _safeSetState(() => _status = 'PDF 저장/공유 창을 여는 중입니다.');
+    try {
       await SharePlus.instance.share(
         ShareParams(
-          files: [
-            XFile(reportFile.path, mimeType: 'application/pdf', name: fileName),
-          ],
+          files: [XFile(filePath, mimeType: 'application/pdf', name: fileName)],
           fileNameOverrides: [fileName],
           subject: 'STT Presentation Review 리포트',
           title: 'PDF 리포트 저장',
@@ -379,7 +418,10 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
         _status = 'PDF 저장/공유 창을 열었습니다.';
       });
       _showSnack('PDF 저장/공유 창을 열었습니다.');
-    });
+    } catch (error) {
+      _safeSetState(() => _status = '오류: PDF 공유/저장 창을 열지 못했습니다. $error');
+      _showSnack('PDF 공유/저장 창을 열지 못했습니다.');
+    }
   }
 
   void _showSnack(String message) {
