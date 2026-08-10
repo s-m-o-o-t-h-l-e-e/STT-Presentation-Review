@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
+import 'package:file_saver/file_saver.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -335,11 +337,24 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
     if (analysis == null) return;
     await _runBusy(() async {
       final bytes = await ReportBuilder().build(analysis);
+      final fileName =
+          'presentation-review-${DateTime.now().millisecondsSinceEpoch}';
+      final savedPath = await FileSaver.instance.saveFile(
+        name: fileName,
+        bytes: Uint8List.fromList(bytes),
+        fileExtension: 'pdf',
+        mimeType: MimeType.pdf,
+      );
       final dir = await getApplicationDocumentsDirectory();
-      final path = '${dir.path}/presentation-review-report.pdf';
-      await File(path).writeAsBytes(bytes);
-      await OpenFilex.open(path);
-      _safeSetState(() => _status = '리포트를 저장했습니다: $path');
+      final backupPath = '${dir.path}/$fileName.pdf';
+      await File(backupPath).writeAsBytes(bytes);
+      final openPath = savedPath.isNotEmpty ? savedPath : backupPath;
+      await OpenFilex.open(openPath);
+      _safeSetState(() {
+        _status = savedPath.isNotEmpty
+            ? '리포트를 파일에 저장했습니다: $savedPath'
+            : '리포트를 앱 문서 폴더에 저장했습니다: $backupPath';
+      });
     });
   }
 

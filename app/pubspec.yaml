@@ -42,6 +42,7 @@ dependencies:
   record: ^7.1.1
   xml: ^6.5.0
   syncfusion_flutter_pdf: ^33.2.13
+  file_saver: ^0.4.0
 
 dev_dependencies:
   flutter_test:
