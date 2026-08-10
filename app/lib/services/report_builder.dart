@@ -1,12 +1,23 @@
+import 'package:flutter/services.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../models/analysis_result.dart';
 
 class ReportBuilder {
   Future<List<int>> build(AnalysisResult analysis) async {
+    final fontData = await rootBundle.load(
+      'assets/fonts/NotoSansKR-Regular.ttf',
+    );
+    final koreanFont = pw.Font.ttf(fontData);
     final doc = pw.Document();
     doc.addPage(
       pw.MultiPage(
+        theme: pw.ThemeData.withFont(
+          base: koreanFont,
+          bold: koreanFont,
+          italic: koreanFont,
+          boldItalic: koreanFont,
+        ),
         build: (_) => [
           pw.Text('STT Presentation Review', style: pw.TextStyle(fontSize: 22)),
           pw.SizedBox(height: 12),
