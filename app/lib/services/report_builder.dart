@@ -4,12 +4,16 @@ import 'package:pdf/widgets.dart' as pw;
 import '../models/analysis_result.dart';
 
 class ReportBuilder {
+  static const _maxTextBlockLength = 650;
+  static const _maxTranscriptBlocks = 80;
+
   Future<List<int>> build(AnalysisResult analysis) async {
     final fontData = await rootBundle.load(
       'assets/fonts/NotoSansKR-Regular.ttf',
     );
     final koreanFont = pw.Font.ttf(fontData);
     final doc = pw.Document();
+    final transcriptBlocks = _splitText(analysis.transcript);
     doc.addPage(
       pw.MultiPage(
         theme: pw.ThemeData.withFont(
@@ -53,10 +57,42 @@ class ReportBuilder {
           for (final item in analysis.problems) pw.Bullet(text: item),
           pw.SizedBox(height: 12),
           pw.Text('Transcript', style: pw.TextStyle(fontSize: 16)),
-          pw.Text(analysis.transcript),
+          ...transcriptBlocks
+              .take(_maxTranscriptBlocks)
+              .map(
+                (chunk) => pw.Padding(
+                  padding: const pw.EdgeInsets.only(bottom: 6),
+                  child: pw.Text(
+                    chunk,
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ),
+              ),
+          if (transcriptBlocks.length > _maxTranscriptBlocks)
+            pw.Text(
+              'Transcript truncated in PDF for performance.',
+              style: const pw.TextStyle(fontSize: 9),
+            ),
         ],
       ),
     );
     return doc.save();
+  }
+
+  List<String> _splitText(String text) {
+    final normalized = text.trim();
+    if (normalized.isEmpty) return ['전사문이 없습니다.'];
+    final chunks = <String>[];
+    var start = 0;
+    while (start < normalized.length) {
+      var end = (start + _maxTextBlockLength).clamp(0, normalized.length);
+      if (end < normalized.length) {
+        final sentenceEnd = normalized.lastIndexOf(RegExp(r'[.!?。！？\n]'), end);
+        if (sentenceEnd > start + 120) end = sentenceEnd + 1;
+      }
+      chunks.add(normalized.substring(start, end).trim());
+      start = end;
+    }
+    return chunks.where((chunk) => chunk.isNotEmpty).toList();
   }
 }

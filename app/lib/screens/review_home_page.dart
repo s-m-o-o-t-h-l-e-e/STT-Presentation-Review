@@ -1339,17 +1339,26 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
   Widget _transcriptCard(AnalysisResult analysis) {
     final transcript = analysis.transcript;
     final segments = analysis.segments;
+    final displayedSegments = segments.take(35).toList();
+    final hiddenSegmentCount = math.max(
+      0,
+      segments.length - displayedSegments.length,
+    );
+    final transcriptPreview = transcript.length > 4500
+        ? '${transcript.substring(0, 4500)}\n\n... 전사문이 길어 앱 속도를 위해 일부만 표시합니다.'
+        : transcript;
     return SectionCard(
       title: '전사문',
       subtitle: segments.length > 1 ? '시간대별 발화 구간' : null,
       child: segments.isEmpty
-          ? SelectableText(
-              transcript.isEmpty ? '전사문이 없습니다.' : transcript,
+          ? Text(
+              transcriptPreview.isEmpty ? '전사문이 없습니다.' : transcriptPreview,
               style: const TextStyle(height: 1.45),
             )
           : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (final segment in segments)
+                for (final segment in displayedSegments)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Row(
@@ -1377,8 +1386,10 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
                         ),
                         const SizedBox(width: 10),
                         Expanded(
-                          child: SelectableText(
+                          child: Text(
                             segment.text,
+                            maxLines: 5,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               color: _appInk,
                               fontSize: 15,
@@ -1387,6 +1398,22 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+                if (hiddenSegmentCount > 0)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF2F4F7),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Text(
+                      '나머지 $hiddenSegmentCount개 구간은 PDF 리포트에 포함됩니다.',
+                      style: const TextStyle(
+                        color: _appMuted,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
               ],
