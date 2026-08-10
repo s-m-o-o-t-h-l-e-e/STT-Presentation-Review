@@ -1,15 +1,14 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
-import 'package:file_saver/file_saver.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:open_filex/open_filex.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../models/analysis_result.dart';
 import '../models/app_picked_file.dart';
@@ -28,6 +27,7 @@ const _appMint = Color(0xFF14B8A6);
 const _appCoral = Color(0xFFFF6B5F);
 const _appVioletDot = Color(0xFF7C3AED);
 const _appBg = Color(0xFFF7F8FB);
+const _reportChannel = MethodChannel('stt_project/report_saver');
 
 class ReviewHomePage extends StatefulWidget {
   const ReviewHomePage({super.key});
@@ -338,22 +338,35 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
     await _runBusy(() async {
       final bytes = await ReportBuilder().build(analysis);
       final fileName =
-          'presentation-review-${DateTime.now().millisecondsSinceEpoch}';
-      final savedPath = await FileSaver.instance.saveFile(
-        name: fileName,
-        bytes: Uint8List.fromList(bytes),
-        fileExtension: 'pdf',
-        mimeType: MimeType.pdf,
-      );
+          'presentation-review-${DateTime.now().millisecondsSinceEpoch}.pdf';
       final dir = await getApplicationDocumentsDirectory();
-      final backupPath = '${dir.path}/$fileName.pdf';
-      await File(backupPath).writeAsBytes(bytes);
-      final openPath = savedPath.isNotEmpty ? savedPath : backupPath;
-      await OpenFilex.open(openPath);
+      final backupPath = '${dir.path}/$fileName';
+      final reportFile = await File(backupPath).writeAsBytes(bytes);
+
+      if (Platform.isAndroid) {
+        final savedPath = await _reportChannel.invokeMethod<String>('savePdf', {
+          'filePath': reportFile.path,
+          'fileName': fileName,
+        });
+        _safeSetState(() {
+          _status = savedPath == null ? 'PDF 저장을 취소했습니다.' : 'PDF 리포트를 저장했습니다.';
+        });
+        return;
+      }
+
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [
+            XFile(reportFile.path, mimeType: 'application/pdf', name: fileName),
+          ],
+          fileNameOverrides: [fileName],
+          subject: 'STT Presentation Review 리포트',
+          title: 'PDF 리포트 저장',
+          text: '분석 리포트 PDF입니다.',
+        ),
+      );
       _safeSetState(() {
-        _status = savedPath.isNotEmpty
-            ? '리포트를 파일에 저장했습니다: $savedPath'
-            : '리포트를 앱 문서 폴더에 저장했습니다: $backupPath';
+        _status = 'PDF 저장/공유 창을 열었습니다.';
       });
     });
   }
