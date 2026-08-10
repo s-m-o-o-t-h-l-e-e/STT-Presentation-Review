@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive_io.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart' as sfpdf;
 import 'package:xml/xml.dart';
 
 import '../models/app_picked_file.dart';
@@ -14,15 +16,7 @@ class MaterialExtractor {
 
     final extension = file.name.split('.').last.toLowerCase();
     if (extension == 'pptx') return _extractPptx(file);
-    if (extension == 'pdf') {
-      return MaterialInfo(
-        name: file.name,
-        type: 'PDF',
-        text: '',
-        sections: const [],
-        error: '앱 내 PDF 텍스트 추출은 아직 지원하지 않습니다. PPTX 자료는 반영률 분석이 가능합니다.',
-      );
-    }
+    if (extension == 'pdf') return _extractPdf(file);
 
     return MaterialInfo(
       name: file.name,
@@ -51,7 +45,7 @@ class MaterialExtractor {
 
       final sections = <MaterialSection>[];
       for (final slide in slideFiles) {
-        final xml = XmlDocument.parse(String.fromCharCodes(slide.content));
+        final xml = XmlDocument.parse(utf8.decode(slide.content));
         final texts = xml
             .findAllElements('a:t')
             .map((node) => node.innerText.trim())
@@ -90,5 +84,59 @@ class MaterialExtractor {
   int _slideNumber(String path) {
     final match = RegExp(r'slide(\d+)\.xml$').firstMatch(path);
     return int.tryParse(match?.group(1) ?? '') ?? 0;
+  }
+
+  Future<MaterialInfo> _extractPdf(AppPickedFile file) async {
+    sfpdf.PdfDocument? document;
+    try {
+      final bytes = await File(file.path).readAsBytes();
+      document = sfpdf.PdfDocument(inputBytes: bytes);
+      final extractor = sfpdf.PdfTextExtractor(document);
+      final sections = <MaterialSection>[];
+      for (var i = 0; i < document.pages.count; i++) {
+        final text = extractor.extractText(startPageIndex: i, endPageIndex: i);
+        final body = _normalizeText(text);
+        if (body.isEmpty) continue;
+        sections.add(
+          MaterialSection(
+            page: i + 1,
+            title: _sectionTitle(body, 'Page ${i + 1}'),
+            text: body,
+          ),
+        );
+      }
+      final fullText = sections.map((item) => item.text).join('\n').trim();
+      return MaterialInfo(
+        name: file.name,
+        type: 'PDF',
+        text: fullText,
+        sections: sections,
+        error: fullText.isEmpty ? 'PDF에서 추출 가능한 텍스트를 찾지 못했습니다.' : '',
+      );
+    } catch (error) {
+      return MaterialInfo(
+        name: file.name,
+        type: 'PDF',
+        text: '',
+        sections: const [],
+        error: 'PDF 텍스트 추출 실패: $error',
+      );
+    } finally {
+      document?.dispose();
+    }
+  }
+
+  String _normalizeText(String text) {
+    return text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  String _sectionTitle(String text, String fallback) {
+    final firstLine = text
+        .split(RegExp(r'[.!?\n]'))
+        .map((line) => line.trim())
+        .firstWhere((line) => line.isNotEmpty, orElse: () => fallback);
+    return firstLine.length > 40
+        ? '${firstLine.substring(0, 40)}...'
+        : firstLine;
   }
 }

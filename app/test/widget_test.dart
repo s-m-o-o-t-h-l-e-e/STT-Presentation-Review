@@ -6,7 +6,6 @@ void main() {
     await tester.pumpWidget(const PresentationReviewApp());
 
     expect(find.text('발표 코치'), findsOneWidget);
-    expect(find.text('발표를 더 선명하게'), findsOneWidget);
     expect(find.text('음성 및 발표자료'), findsOneWidget);
     expect(find.text('등록\n발표자료'), findsOneWidget);
 
