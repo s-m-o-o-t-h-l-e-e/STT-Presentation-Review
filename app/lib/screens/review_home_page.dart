@@ -335,7 +335,9 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
   Future<void> _downloadReport() async {
     final analysis = _analysis;
     if (analysis == null) return;
+    _showSnack('PDF 리포트를 만드는 중입니다.');
     await _runBusy(() async {
+      _safeSetState(() => _status = 'PDF 리포트를 만드는 중입니다.');
       final bytes = await ReportBuilder().build(analysis);
       final fileName =
           'presentation-review-${DateTime.now().millisecondsSinceEpoch}.pdf';
@@ -354,6 +356,11 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
               ? 'PDF 리포트를 Downloads에 저장하고 열었습니다.'
               : 'PDF 리포트를 Downloads에 저장했습니다. PDF 뷰어 앱이 없으면 파일 앱에서 열어주세요.';
         });
+        _showSnack(
+          opened
+              ? 'Downloads에 저장했고 PDF 열기를 실행했습니다.'
+              : 'Downloads에 PDF를 저장했습니다.',
+        );
         return;
       }
 
@@ -371,7 +378,21 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
       _safeSetState(() {
         _status = 'PDF 저장/공유 창을 열었습니다.';
       });
+      _showSnack('PDF 저장/공유 창을 열었습니다.');
     });
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
   }
 
   AppSettings _settings() {
@@ -394,6 +415,12 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
 
   String _friendlyError(Object error) {
     final text = '$error';
+    if (text.contains('save_failed') ||
+        text.contains('PDF') ||
+        text.contains('MediaStore') ||
+        text.contains('Downloads')) {
+      return '오류: PDF 저장에 실패했습니다. 저장소 접근 또는 PDF 생성 상태를 확인하세요. ($text)';
+    }
     if (text.contains('Claude API') ||
         text.contains('Anthropic') ||
         text.contains('credit balance') ||
@@ -1139,6 +1166,19 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
             const SizedBox(height: 8),
             Text('첨부자료: ${analysis.materialName}'),
           ],
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: FilledButton.icon(
+              onPressed: _busy ? null : _downloadReport,
+              icon: const Icon(CupertinoIcons.arrow_down_doc),
+              label: const Text(
+                'PDF 리포트 저장',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
         ],
       ),
     );
