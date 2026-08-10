@@ -344,12 +344,15 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
       final reportFile = await File(backupPath).writeAsBytes(bytes);
 
       if (Platform.isAndroid) {
-        final savedPath = await _reportChannel.invokeMethod<String>('savePdf', {
-          'filePath': reportFile.path,
-          'fileName': fileName,
-        });
+        final result = await _reportChannel.invokeMapMethod<String, dynamic>(
+          'savePdf',
+          {'filePath': reportFile.path, 'fileName': fileName},
+        );
+        final opened = result?['opened'] == true;
         _safeSetState(() {
-          _status = savedPath == null ? 'PDF 저장을 취소했습니다.' : 'PDF 리포트를 저장했습니다.';
+          _status = opened
+              ? 'PDF 리포트를 Downloads에 저장하고 열었습니다.'
+              : 'PDF 리포트를 Downloads에 저장했습니다. PDF 뷰어 앱이 없으면 파일 앱에서 열어주세요.';
         });
         return;
       }

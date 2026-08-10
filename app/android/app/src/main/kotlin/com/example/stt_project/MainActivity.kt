@@ -1,8 +1,12 @@
 package com.example.stt_project
 
-import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.ContentValues
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodChannel
@@ -11,9 +15,6 @@ import java.io.FileInputStream
 
 class MainActivity : FlutterActivity() {
     private val reportChannel = "stt_project/report_saver"
-    private val createReportRequestCode = 4207
-    private var pendingReportPath: String? = null
-    private var pendingResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -30,50 +31,66 @@ class MainActivity : FlutterActivity() {
                     result.error("missing_file", "PDF file path is missing.", null)
                     return@setMethodCallHandler
                 }
-                if (pendingResult != null) {
-                    result.error("save_in_progress", "Another PDF save request is already open.", null)
-                    return@setMethodCallHandler
-                }
 
-                pendingReportPath = filePath
-                pendingResult = result
-                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "application/pdf"
-                    putExtra(Intent.EXTRA_TITLE, fileName)
+                try {
+                    val uri = savePdfToDownloads(filePath, fileName)
+                    val opened = openPdf(uri)
+                    result.success(
+                        mapOf(
+                            "uri" to uri.toString(),
+                            "opened" to opened
+                        )
+                    )
+                } catch (error: Exception) {
+                    result.error("save_failed", error.message, null)
                 }
-                startActivityForResult(intent, createReportRequestCode)
             }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != createReportRequestCode) return
-
-        val result = pendingResult
-        val sourcePath = pendingReportPath
-        pendingResult = null
-        pendingReportPath = null
-
-        if (resultCode != Activity.RESULT_OK || data?.data == null) {
-            result?.success(null)
-            return
+    private fun savePdfToDownloads(sourcePath: String, fileName: String): Uri {
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
         }
-        if (sourcePath.isNullOrBlank()) {
-            result?.error("missing_file", "PDF file path is missing.", null)
-            return
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        } else {
+            MediaStore.Files.getContentUri("external")
         }
-
+        val uri = contentResolver.insert(collection, values)
+            ?: throw IllegalStateException("Cannot create PDF in Downloads.")
         try {
-            val targetUri: Uri = data.data!!
-            contentResolver.openOutputStream(targetUri)?.use { output ->
+            contentResolver.openOutputStream(uri)?.use { output ->
                 FileInputStream(File(sourcePath)).use { input ->
                     input.copyTo(output)
                 }
-            } ?: throw IllegalStateException("Cannot open selected file.")
-            result?.success(targetUri.toString())
+            } ?: throw IllegalStateException("Cannot write PDF file.")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.clear()
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                contentResolver.update(uri, values, null, null)
+            }
+            return uri
         } catch (error: Exception) {
-            result?.error("save_failed", error.message, null)
+            contentResolver.delete(uri, null, null)
+            throw error
+        }
+    }
+
+    private fun openPdf(uri: Uri): Boolean {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/pdf")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        return try {
+            startActivity(Intent.createChooser(intent, "PDF 리포트 열기"))
+            true
+        } catch (_: ActivityNotFoundException) {
+            false
         }
     }
 }
