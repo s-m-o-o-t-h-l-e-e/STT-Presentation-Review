@@ -14,7 +14,7 @@ flutter run --dart-define-from-file=env.json
 
 API 키를 Dart 코드나 앱 화면에 직접 넣지 않습니다. 프로젝트 루트의 로컬 파일 `env.json`에 넣고 빌드할 때 주입합니다.
 
-`env.example.json`을 복사해 `env.json`을 만들고 실제 키를 넣습니다. `env.json`은 `.gitignore`에 포함되어 Git에 올라가지 않습니다.
+`env.example.json`을 복사해 `env.json`을 만들고 실제 키를 넣습니다.
 
 ```bash
 cp env.example.json env.json
