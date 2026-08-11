@@ -37,14 +37,20 @@ class DocumentMatcher {
       );
     }
 
-    final documentCoverage = _coverageRatio(material.text, transcript);
-    final speechToDocument = _coverageRatio(transcript, material.text);
+    final documentTokens = _contentTokens(material.text);
+    final transcriptTokens = _contentTokens(transcript);
+    final documentSet = documentTokens.toSet();
+    final transcriptSet = transcriptTokens.toSet();
+    final documentCoverage = _coverageRatio(documentSet, transcriptSet);
+    final speechToDocument = _coverageRatio(transcriptSet, documentSet);
     final score = (documentCoverage * 0.7 + speechToDocument * 0.3)
         .round()
         .clamp(0, 100);
 
     final sections = material.sections.take(40).map((section) {
-      final sectionScore = _coverageRatio(section.text, transcript);
+      final sectionTokens = _contentTokens(section.text);
+      final sectionSet = sectionTokens.toSet();
+      final sectionScore = _coverageRatio(sectionSet, transcriptSet);
       return DocumentSectionMatch(
         page: section.page,
         title: section.title,
@@ -54,7 +60,7 @@ class DocumentMatcher {
             : sectionScore >= 25
             ? '일부 누락'
             : '누락 가능',
-        missing: _topMissingTerms(section.text, transcript, 5),
+        missing: _topMissingTerms(sectionTokens, transcriptSet, 5),
       );
     }).toList();
 
@@ -66,15 +72,13 @@ class DocumentMatcher {
       summary: '발표자료 핵심어 기준 약 $documentCoverage%가 음성 전사에 반영되었습니다.',
       documentCoverage: documentCoverage,
       speechExtraRatio: max(0, 100 - speechToDocument),
-      missingTerms: _topMissingTerms(material.text, transcript, 12),
-      extraTerms: _topMissingTerms(transcript, material.text, 12),
+      missingTerms: _topMissingTerms(documentTokens, transcriptSet, 12),
+      extraTerms: _topMissingTerms(transcriptTokens, documentSet, 12),
       sections: sections,
     );
   }
 
-  int _coverageRatio(String sourceText, String targetText) {
-    final source = _contentTokens(sourceText).toSet();
-    final target = _contentTokens(targetText).toSet();
+  int _coverageRatio(Set<String> source, Set<String> target) {
     if (source.isEmpty || target.isEmpty) return 0;
     return (source.intersection(target).length / source.length * 100)
         .round()
@@ -82,12 +86,10 @@ class DocumentMatcher {
   }
 
   List<String> _topMissingTerms(
-    String sourceText,
-    String targetText,
+    List<String> source,
+    Set<String> target,
     int limit,
   ) {
-    final source = _contentTokens(sourceText);
-    final target = _contentTokens(targetText).toSet();
     final counts = <String, int>{};
     for (final token in source) {
       if (!target.contains(token)) counts[token] = (counts[token] ?? 0) + 1;

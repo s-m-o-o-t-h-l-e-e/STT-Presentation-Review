@@ -197,6 +197,9 @@ class AnalysisResult {
     final duration = max(1.0, end - start);
     final bucketCount = min(12, max(1, (duration / 30).ceil()));
     final bucketSize = duration / bucketCount;
+    final segmentUnits = {
+      for (final segment in segments) segment: speechUnitCount(segment.text),
+    };
     final rows = <Map<String, dynamic>>[];
     for (var i = 0; i < bucketCount; i++) {
       final bucketStart = start + bucketSize * i;
@@ -211,7 +214,7 @@ class AnalysisResult {
         final segmentSeconds = max(1.0, segment.end - segment.start);
         activeSeconds += overlapSeconds;
         units +=
-            (speechUnitCount(segment.text) * overlapSeconds / segmentSeconds)
+            ((segmentUnits[segment] ?? 0) * overlapSeconds / segmentSeconds)
                 .round();
       }
       final wpm = activeSeconds <= 0

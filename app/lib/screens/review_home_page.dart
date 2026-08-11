@@ -1086,9 +1086,11 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
                     borderRadius: BorderRadius.circular(18),
                     border: Border.all(color: const Color(0xFFE5EAF3)),
                   ),
-                  child: CustomPaint(
-                    painter: _PaceLineChartPainter(rows),
-                    child: const SizedBox.expand(),
+                  child: RepaintBoundary(
+                    child: CustomPaint(
+                      painter: _PaceLineChartPainter(rows),
+                      child: const SizedBox.expand(),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -1339,13 +1341,13 @@ class _ReviewHomePageState extends State<ReviewHomePage> {
   Widget _transcriptCard(AnalysisResult analysis) {
     final transcript = analysis.transcript;
     final segments = analysis.segments;
-    final displayedSegments = segments.take(35).toList();
+    final displayedSegments = segments.take(12).toList();
     final hiddenSegmentCount = math.max(
       0,
       segments.length - displayedSegments.length,
     );
     final transcriptPreview = transcript.length > 4500
-        ? '${transcript.substring(0, 4500)}\n\n... 전사문이 길어 앱 속도를 위해 일부만 표시합니다.'
+        ? '${transcript.substring(0, 1800)}\n\n... 전사문이 길어 앱 속도를 위해 일부만 표시합니다.'
         : transcript;
     return SectionCard(
       title: '전사문',
