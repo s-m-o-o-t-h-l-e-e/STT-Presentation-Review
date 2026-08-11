@@ -31,8 +31,7 @@ http://127.0.0.1:8502
 
 ## 환경 변수
 
-실제 실행 키는 `.env`에 넣습니다. `.env`와 `.env.private`는 GitHub에 올리지 않습니다.
-
+실제 실행 키는 `.env`에 넣습니다.
 ```text
 CLOVA_SPEECH_SECRET_KEY
 CLOVA_SPEECH_INVOKE_URL
