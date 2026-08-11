@@ -1,4 +1,4 @@
-.env
+﻿.env
 .env.*
 !.env.example
 
@@ -13,13 +13,11 @@ build/
 .streamlit/secrets.toml
 secret/
 secrets/
-evaluation/speech_data/
-evaluation/voice actor_data/
+
 *.pdf
-
-streaming/
-최종 구현물(mockup)/
-
 *.log
 *.tmp
 *.zip
+
+.DS_Store
+Thumbs.db

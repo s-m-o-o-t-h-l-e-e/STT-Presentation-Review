@@ -34,6 +34,7 @@ def speaker_stats_from_segments(segments: list[dict[str, Any]]) -> list[dict[str
         speaker = normalize_speaker(segment.get("speaker"))
         row = stats.setdefault(speaker, {"speaker": speaker, "sentences": 0, "seconds": 0.0, "words": 0, "fillers": 0})
         text = str(segment.get("text", ""))
+        text = str(segment.get("text", ""))
         seconds = max(0.0, float(segment.get("end", 0) or 0) - float(segment.get("start", 0) or 0))
         row["sentences"] += 1
         row["seconds"] += seconds
