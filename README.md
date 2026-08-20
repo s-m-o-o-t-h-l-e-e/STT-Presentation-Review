@@ -127,3 +127,5 @@ CER = (Substitution + Deletion + Insertion) / Reference Characters * 100
 ```
 
 정답 전사문과 각 STT 모델 전사문을 문자 단위로 비교하고, 공백/문장부호는 제거한 뒤 계산합니다.
+
+테스트커밋
